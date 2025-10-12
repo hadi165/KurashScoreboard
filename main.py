@@ -49,14 +49,15 @@ BASE = dict(
     CODE   = 90,   # IOC codes (TKM/UZB)
     NAME   = 48,
     LABEL  = 36,   # Y C D T
-    TOPMETA= 70    # top-left & top-right info
+    TOPMETA= 70,   # top-left & top-right info
+    WINNER = 54    # mid-ribbon winner text
 )
 FLAG_W, FLAG_H = 288, 192  # baseline flag size
 FLAG_BOOST = 1.6 
 
 # Default zoom for initial layout and Ctrl+0 reset (tune to your preference)
 # Default zoom tuned so fullscreen layouts fit on common displays without manual adjustment
-DEFAULT_ZOOM = 0.55
+DEFAULT_ZOOM = 0.54
 
 # If False, ignore OS DPI scaling to avoid oversized UI on high scaling
 RESPECT_DPI = False
@@ -183,6 +184,7 @@ class ScoreboardWindow(tk.Toplevel):
         self.f_topmeta = tkfont.Font(family="Arial", weight="bold", size=BASE["TOPMETA"])
         self.f_label   = tkfont.Font(family="Arial", weight="bold", size=BASE["LABEL"])
         self.f_name    = tkfont.Font(family="Arial", weight="bold", size=BASE["NAME"])
+        self.f_winner  = tkfont.Font(family="Arial", weight="bold", size=BASE["WINNER"])
 
         self._blue_flag_img=None; self._green_flag_img=None
         self._build(); self._bind(); self._update_time()
@@ -214,6 +216,7 @@ class ScoreboardWindow(tk.Toplevel):
         setsize(self.f_topmeta,BASE["TOPMETA"])
         setsize(self.f_label,  BASE["LABEL"])
         setsize(self.f_name,   BASE["NAME"])
+        setsize(self.f_winner, BASE["WINNER"])
 
         self._refresh_flags()
 
@@ -343,7 +346,7 @@ class ScoreboardWindow(tk.Toplevel):
 
         self.winner_lbl = tk.Label(
             self.winner_area, text="",
-            font=self.f_code, fg="black", bg="black",
+            font=self.f_winner, fg="black", bg="black",
             padx=30, pady=10
         )
         self.winner_lbl.pack()
@@ -730,8 +733,8 @@ class ScoreboardWindow(tk.Toplevel):
             return self._show_tie_screen()
 
         s = self._calc_scale()
-        name_font = tkfont.Font(family="Arial", weight="bold", size=max(60, int(BASE["TIME"] * s)))
-        code_font = tkfont.Font(family="Arial", weight="bold", size=max(48, int(BASE["TIME"] * 0.5 * s)))
+        name_font = tkfont.Font(family="Arial", weight="bold", size=max(48, int(BASE["TIME"] * 0.7 * s)))
+        code_font = tkfont.Font(family="Arial", weight="bold", size=max(40, int(BASE["TIME"] * 0.45 * s)))
         hint_font = tkfont.Font(family="Arial", weight="bold", size=max(24, int(28 * s)))
 
         self.final_frame = tk.Frame(self, bg=bg)
@@ -851,6 +854,8 @@ class ScoreboardWindow(tk.Toplevel):
         cur = bool(self.attributes("-fullscreen"))
         new = (not cur) if force is None else bool(force)
         self.attributes("-fullscreen", new)
+        # Apply scaling shortly after fullscreen change to stabilize layout
+        self.after(60, self._apply_scale)
 
     def _bind(self):
         # bind_all so keys work regardless of focus
