@@ -75,8 +75,8 @@ def parse_code(s:str)->str:
 def clamp(n, lo=0, hi=99): return max(lo, min(hi, n))
 
 # Order of score buckets as rendered left → right
-SCORE_LABELS = ("G", "Y", "C", "D", "T", "H")
-LABEL_COLORS = {"D": "#ff5252", "T": "#ff5252", "H": "#ffe000"}
+SCORE_LABELS = ("G", "Y", "C", "D", "T")
+LABEL_COLORS = {"D": "#ff5252", "T": "#ff5252"}
 LABEL_TO_INDEX = {label: idx for idx, label in enumerate(SCORE_LABELS)}
 SCORE_COUNT = len(SCORE_LABELS)
 MAX_TIMEOUTS = 2
@@ -169,7 +169,6 @@ class ScoreboardWindow(tk.Toplevel):
         self.total_match_time = self.time_left
         self.jaza_active = False
         self.jaza_consumed = False
-        self.final_reason = ""
         self.scale=1.0
         self.zoom=DEFAULT_ZOOM  # default zoom (you can adjust in-app)
         self.match_over = False  # lock scoring once the match is finished
@@ -321,7 +320,8 @@ class ScoreboardWindow(tk.Toplevel):
         self.b_digits, self.b_cells = [], []
         for i, letter in enumerate(SCORE_LABELS):
             cell = tk.Frame(self.b_digits_frame, bg="#222"); cell.grid(row=0, column=i, padx=24)
-            lbl  = tk.Label(cell, text="0", fg="white", bg="#222", font=self.f_digit, width=2); lbl.pack()
+            digit_color = "#ff5252" if letter in ("D","T") else "white"
+            lbl  = tk.Label(cell, text="0", fg=digit_color, bg="#222", font=self.f_digit, width=2); lbl.pack()
             self.b_cells.append(cell); self.b_digits.append(lbl)
             # NEW: make the box clickable for Blue
             self._attach_score_clicks(cell, lbl, is_blue=True, idx=i)
@@ -375,7 +375,8 @@ class ScoreboardWindow(tk.Toplevel):
         self.g_digits, self.g_cells = [], []
         for i, letter in enumerate(SCORE_LABELS):
             cell = tk.Frame(self.g_digits_frame, bg="#222"); cell.grid(row=0, column=i, padx=24)
-            lbl  = tk.Label(cell, text="0", fg="white", bg="#222", font=self.f_digit, width=2); lbl.pack()
+            digit_color = "#ff5252" if letter in ("D","T") else "white"
+            lbl  = tk.Label(cell, text="0", fg=digit_color, bg="#222", font=self.f_digit, width=2); lbl.pack()
             self.g_cells.append(cell); self.g_digits.append(lbl)
 
             # Make the green box clickable as well
@@ -454,16 +455,15 @@ class ScoreboardWindow(tk.Toplevel):
 
         self.running = False
         self.jaza_active = False
-        self.final_reason = ""
         self._update_time()
         self._buzz()
 
         # decide winner and show full-screen overlay
         b, g = sum(self.blue), sum(self.green)
         if b > g:
-            self._show_final_winner_screen("BLUE", self.final_reason)
+            self._show_final_winner_screen("BLUE")
         elif g > b:
-            self._show_final_winner_screen("GREEN", self.final_reason)
+            self._show_final_winner_screen("GREEN")
         else:
             self._show_tie_screen()
 
@@ -484,7 +484,6 @@ class ScoreboardWindow(tk.Toplevel):
             self._show_winner("")
         self.jaza_active = False
         self.jaza_consumed = False
-        self.final_reason = ""
         self._update_time()
 
     def _refresh_digits(self):
@@ -598,24 +597,6 @@ class ScoreboardWindow(tk.Toplevel):
         self._update_timeout_widget(side)
 
 
-    def _check_halal(self, idx: int, is_blue: bool, delta: int) -> bool:
-        if delta <= 0:
-            return False
-        if SCORE_LABELS[idx] != "H":
-            return False
-        winner = "BLUE" if is_blue else "GREEN"
-        self._finish_match_with_winner(winner, reason="HALAL")
-        return True
-
-
-    def _handle_halal_hotkey(self, side: str):
-        if self.match_over:
-            return
-        idx_h = LABEL_TO_INDEX["H"]
-        if side == "BLUE":
-            self._blue_delta(idx_h, +1)
-        else:
-            self._green_delta(idx_h, +1)
 
 
     def _maybe_trigger_jaza_pause(self) -> bool:
@@ -675,7 +656,7 @@ class ScoreboardWindow(tk.Toplevel):
             opponent[LABEL_TO_INDEX["Y"]] = clamp(opponent[LABEL_TO_INDEX["Y"]] + delta)
 
 
-    def _finish_match_with_winner(self, winner: str, reason: str = ""):
+    def _finish_match_with_winner(self, winner: str):
         """Stop the match immediately and declare the winner."""
         if self.match_over:
             return
@@ -688,7 +669,7 @@ class ScoreboardWindow(tk.Toplevel):
             self.after_id = None
         self.jaza_active = False
         self.match_over = True
-        self._show_winner(winner, reason)
+        self._show_winner(winner)
 
 
     def _check_penalty_end(self):
@@ -718,13 +699,10 @@ class ScoreboardWindow(tk.Toplevel):
         self.final_frame = None
 
 
-    def _show_final_winner_screen(self, who: str, reason: str = ""):
+    def _show_final_winner_screen(self, who: str):
         """Cover the UI with a full-screen winner card."""
         self.match_over = True
         self._clear_final_screen()
-
-        if reason:
-            self.final_reason = reason
 
         if who == "BLUE":
             bg, fg = "#1976d2", "white"
@@ -747,11 +725,6 @@ class ScoreboardWindow(tk.Toplevel):
         tk.Label(self.final_frame, text="WINNER", bg=bg, fg=fg, font=code_font, pady=10).pack(pady=(30, 10))
         tk.Label(self.final_frame, text=name,   bg=bg, fg=fg, font=name_font).pack(pady=(10, 10))
         tk.Label(self.final_frame, text=code,   bg=bg, fg=fg, font=code_font).pack(pady=(0, 30))
-
-        if reason == "HALAL":
-            tk.Label(self.final_frame, text='WINS BY "HALAL"', bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
-        elif reason:
-            tk.Label(self.final_frame, text=reason, bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
 
         tk.Label(self.final_frame, text="Press 0 to reset", bg=bg, fg=fg, font=hint_font).pack(pady=(20, 10))
 
@@ -789,11 +762,9 @@ class ScoreboardWindow(tk.Toplevel):
         self.blue[idx] = new_val
         self._apply_penalty_side_effects(is_blue=True, idx=idx, delta=delta)
         self._refresh_digits()
-        if self._check_halal(idx, is_blue=True, delta=delta):
-            return
         if self._check_penalty_end():
             return
- 
+
     def _green_delta(self, idx, d):
         if self.match_over: return
         prev = self.green[idx]
@@ -805,8 +776,6 @@ class ScoreboardWindow(tk.Toplevel):
         self.green[idx] = new_val
         self._apply_penalty_side_effects(is_blue=False, idx=idx, delta=delta)
         self._refresh_digits()
-        if self._check_halal(idx, is_blue=False, delta=delta):
-            return
         if self._check_penalty_end():
             return
 
@@ -820,7 +789,6 @@ class ScoreboardWindow(tk.Toplevel):
         self._reset_time()
         self._refresh_digits()
         self._update_timeout_widgets()
-        self.final_reason = ""
         self._show_winner("")  # clear mini ribbon
 
 
@@ -828,32 +796,20 @@ class ScoreboardWindow(tk.Toplevel):
         b,g = sum(self.blue), sum(self.green)
         self._show_winner("BLUE" if b>g else "GREEN" if g>b else "")
 
-    def _show_winner(self, who: str, reason: str = ""):
+    def _show_winner(self, who: str):
         # Keep small ribbon (if you still want it mid-match)
         if not who:
             self.winner_lbl.config(text="", bg="black", fg="black")
-            self.final_reason = ""
             return
 
-        self.final_reason = reason
-        reason = reason or ""
-
         if who == "BLUE":
-            if reason == "HALAL":
-                text = 'Blue competitor wins by "HALAL"'
-            else:
-                text = f"{self.cfg['name1']} WINS"
-            self.winner_lbl.config(text=text, bg="#1976d2", fg="white")
+            self.winner_lbl.config(text=f"{self.cfg['name1']} WINS", bg="#1976d2", fg="white")
         elif who == "GREEN":
-            if reason == "HALAL":
-                text = 'Green competitor wins by "HALAL"'
-            else:
-                text = f"{self.cfg['name2']} WINS"
-            self.winner_lbl.config(text=text, bg="#00e676", fg="black")
+            self.winner_lbl.config(text=f"{self.cfg['name2']} WINS", bg="#00e676", fg="black")
 
         # If match already ended (or you just want to force the final screen), show overlay too
         if not self.running and self.time_left == 0 or self.match_over:
-            self._show_final_winner_screen(who, reason or self.final_reason)
+            self._show_final_winner_screen(who)
 
 
 
@@ -891,9 +847,6 @@ class ScoreboardWindow(tk.Toplevel):
         idx_d = LABEL_TO_INDEX["D"]
         idx_t = LABEL_TO_INDEX["T"]
 
-        def halal_handler(side):
-            return lambda e: (self._handle_halal_hotkey(side), "break")[1]
-
         b("r", lambda e: self._blue_delta(idx_y,+1)); b("R", lambda e: self._blue_delta(idx_y,-1))
         b("h", lambda e: self._blue_delta(idx_y,+1)); b("H", lambda e: self._blue_delta(idx_y,-1))
         b("y", lambda e: self._blue_delta(idx_c,+1)); b("Y", lambda e: self._blue_delta(idx_c,-1))
@@ -912,8 +865,6 @@ class ScoreboardWindow(tk.Toplevel):
         b("A", lambda e: self.auto_winner.set(not self.auto_winner.get()))
         b("j", lambda e: self._resume_from_jaza())
         b("J", lambda e: self._resume_from_jaza())
-        b("<Shift-B>", halal_handler("BLUE"))
-        b("<Shift-G>", halal_handler("GREEN"))
 
        
 

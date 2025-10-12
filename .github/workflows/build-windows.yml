@@ -1,0 +1,23 @@
+name: build-windows
+on: [push, workflow_dispatch]
+jobs:
+  win-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          # install your deps if any:
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+      - run: |
+          pyinstaller --name KurashScoreboard --onefile --windowed `
+            --add-data "sound;sound" --add-data "flags;flags" `
+            --icon assets\icon.ico main.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KurashScoreboard-win
+          path: dist/KurashScoreboard.exe
+
