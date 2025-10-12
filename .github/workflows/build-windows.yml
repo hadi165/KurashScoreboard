@@ -1,20 +1,41 @@
-      - name: Build Windows EXE with PyInstaller
+name: build-windows
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  win-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           if (Test-Path requirements.txt) { pip install -r requirements.txt }
           pip install pyinstaller
 
-          # Optional icon (skip if not present)
+      - name: Build Windows EXE with PyInstaller
+        shell: pwsh
+        run: |
           $iconArg = @()
           if (Test-Path 'assets\icon.ico') { $iconArg = @('--icon', 'assets\icon.ico') }
-
-          # Ensure entry exists (adjust if your entry is not main.py)
           if (-not (Test-Path 'main.py')) { throw 'main.py not found at repo root.' }
 
-          # Build with correct asset folders
           pyinstaller --name KurashScoreboard --onefile --windowed `
             --add-data "Sounds;Sounds" `
             --add-data "Flags;Flags" `
             @iconArg main.py
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KurashScoreboard-win
+          path: dist/KurashScoreboard.exe
