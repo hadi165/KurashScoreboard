@@ -33,6 +33,7 @@ if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
 
 FLAGS_DIR  = os.path.join(ROOT_DIR, "Flags")
 SOUNDS_DIR = os.path.join(ROOT_DIR, "Sounds")
+IKA_LOGO_PATH = os.path.join(FLAGS_DIR, "IKA.png")
 
 APP_TITLE = "Kurash Scoreboard (Photo Theme – Responsive)"
 ROOT_DIR   = os.path.dirname(__file__)
@@ -50,6 +51,7 @@ BASE = dict(
     NAME   = 48,
     LABEL  = 36,   # Y C D T
     TOPMETA= 70,   # top-left & top-right info
+    SUBMETA= 46,   # gender / weight detail
     WINNER = 54    # mid-ribbon winner text
 )
 FLAG_W, FLAG_H = 288, 192  # baseline flag size
@@ -185,8 +187,10 @@ class ScoreboardWindow(tk.Toplevel):
         self.f_label   = tkfont.Font(family="Arial", weight="bold", size=BASE["LABEL"])
         self.f_name    = tkfont.Font(family="Arial", weight="bold", size=BASE["NAME"])
         self.f_winner  = tkfont.Font(family="Arial", weight="bold", size=BASE["WINNER"])
+        self.f_submeta = tkfont.Font(family="Arial", weight="normal", size=BASE["SUBMETA"])
 
         self._blue_flag_img=None; self._green_flag_img=None
+        self._ika_logo_img=None
         self._build(); self._bind(); self._update_time()
         self.bind("<Configure>", self._on_resize)
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -217,8 +221,10 @@ class ScoreboardWindow(tk.Toplevel):
         setsize(self.f_label,  BASE["LABEL"])
         setsize(self.f_name,   BASE["NAME"])
         setsize(self.f_winner, BASE["WINNER"])
+        setsize(self.f_submeta,BASE["SUBMETA"])
 
         self._refresh_flags()
+        self._refresh_logo()
 
         pad = max(12, int(24*s))
         for cell in getattr(self, "b_cells", []): cell.grid_configure(padx=pad)
@@ -257,6 +263,33 @@ class ScoreboardWindow(tk.Toplevel):
             self.green_flag.config(image=self._green_flag_img)
 
 
+    def _refresh_logo(self):
+        if not hasattr(self, "ika_logo"):
+            return
+
+        if not os.path.exists(IKA_LOGO_PATH):
+            return
+
+        # target logo roughly same height and double width of athlete flags
+        flag_w = max(30, int(FLAG_W * self.scale * FLAG_BOOST))
+        flag_h = max(20, int(FLAG_H * self.scale * FLAG_BOOST))
+        max_w = max(40, int(flag_w * 1.0))
+        max_h = max(20, int(flag_h * 1.0))
+
+        try:
+            with Image.open(IKA_LOGO_PATH) as img:
+                ow, oh = img.size
+                if ow == 0 or oh == 0:
+                    return
+                scale = min(max_w / ow, max_h / oh)
+                new_size = (max(10, int(ow * scale)), max(10, int(oh * scale)))
+                resized = img.resize(new_size, Image.LANCZOS)
+                self._ika_logo_img = ImageTk.PhotoImage(resized)
+                self.ika_logo.config(image=self._ika_logo_img)
+        except Exception:
+            pass
+
+
     def _sound_file(self): return os.path.join(SOUNDS_DIR, f"Ring{int(self.cfg.get('ring',1)):02d}.wav")
     def _buzz(self):
         path=self._sound_file()
@@ -287,12 +320,16 @@ class ScoreboardWindow(tk.Toplevel):
                                       fg="white", bg="black", font=self.f_topmeta)
         self.top_left_meta.grid(row=0, column=0, sticky="w", padx=20)
 
-        self.time_lbl = tk.Label(top, text="00:00", fg="red", bg="black", font=self.f_time)
-        self.time_lbl.grid(row=0, column=1, sticky="n", pady=(0,4))
+        left_detail = f"{self.cfg['gender']}   {self.cfg['weight']}"
+        self.top_left_detail = tk.Label(top, text=left_detail, fg="#cccccc", bg="black", font=self.f_submeta)
+        self.top_left_detail.grid(row=1, column=0, sticky="w", padx=20, pady=(0,0))
 
-        right_meta = f"{self.cfg['gender']}   {self.cfg['weight']}"
-        self.top_right_meta = tk.Label(top, text=right_meta, fg="white", bg="black", font=self.f_topmeta)
-        self.top_right_meta.grid(row=0, column=2, sticky="e", padx=20)
+        self.time_lbl = tk.Label(top, text="00:00", fg="red", bg="black", font=self.f_time)
+        self.time_lbl.grid(row=0, column=1, rowspan=2, sticky="n", pady=(0,4))
+
+        self.ika_logo = tk.Label(top, bg="black")
+        self.ika_logo.grid(row=0, column=2, rowspan=2, sticky="e", padx=20)
+        self._refresh_logo()
 
         # Middle area
         mid = tk.Frame(self, bg="black"); mid.pack(expand=True, fill="both", pady=6)
