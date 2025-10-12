@@ -75,7 +75,7 @@ def parse_code(s:str)->str:
 def clamp(n, lo=0, hi=99): return max(lo, min(hi, n))
 
 # Order of score buckets as rendered left → right
-SCORE_LABELS = ("G", "Y", "C", "D", "T")
+SCORE_LABELS = ("G", "Y", "C", "D", "T", "H")
 LABEL_COLORS = {"D": "#ff5252", "T": "#ff5252"}
 LABEL_TO_INDEX = {label: idx for idx, label in enumerate(SCORE_LABELS)}
 SCORE_COUNT = len(SCORE_LABELS)
@@ -166,6 +166,9 @@ class ScoreboardWindow(tk.Toplevel):
         self.blue=[0]*SCORE_COUNT; self.green=[0]*SCORE_COUNT
         self.timeout_counts = {"BLUE": 0, "GREEN": 0}
         self.timeout_widgets = {}
+        self.total_match_time = self.time_left
+        self.jaza_active = False
+        self.jaza_consumed = False
         self.scale=1.0
         self.zoom=DEFAULT_ZOOM  # default zoom (you can adjust in-app)
         self.match_over = False  # lock scoring once the match is finished
@@ -428,8 +431,10 @@ class ScoreboardWindow(tk.Toplevel):
             self._update_time()
             if self.time_left <= 0:
                 self._handle_time_expired()
-            else:
-                self.after_id = self.after(1000, self._tick)
+                return
+            if self._maybe_trigger_jaza_pause():
+                return
+            self.after_id = self.after(1000, self._tick)
         else:
             self._handle_time_expired()
 
@@ -447,6 +452,7 @@ class ScoreboardWindow(tk.Toplevel):
             self.after_id = None
 
         self.running = False
+        self.jaza_active = False
         self._update_time()
         self._buzz()
 
@@ -461,6 +467,8 @@ class ScoreboardWindow(tk.Toplevel):
 
 
     def _toggle_timer(self,_=None):
+        if self.jaza_active:
+            return
         self.running = not self.running
         if self.running: self.after_id = self.after(1000, self._tick)
         elif self.after_id: self.after_cancel(self.after_id); self.after_id=None
@@ -468,7 +476,13 @@ class ScoreboardWindow(tk.Toplevel):
     def _reset_time(self,_=None):
         self.running=False
         if self.after_id: self.after_cancel(self.after_id); self.after_id=None
-        self.time_left = self.cfg["mm"]*60 + self.cfg["ss"]; self._update_time()
+        self.time_left = self.cfg["mm"]*60 + self.cfg["ss"]
+        self.total_match_time = self.time_left
+        if self.jaza_active:
+            self._show_winner("")
+        self.jaza_active = False
+        self.jaza_consumed = False
+        self._update_time()
 
     def _refresh_digits(self):
         for i,l in enumerate(self.b_digits): l.config(text=str(self.blue[i]))
@@ -515,7 +529,7 @@ class ScoreboardWindow(tk.Toplevel):
         color = "#1976d2" if is_blue else "#00e676"
         circle = canvas.create_oval(10, 10, 70, 70, outline=color, width=4)
         font = tkfont.Font(family="Arial", weight="bold", size=32)
-        text = canvas.create_text(40, 40, text="+", fill=color, font=font)
+        text = canvas.create_text(40, 40, text="+", fill=color, font=font, anchor="center")
 
         side = "BLUE" if is_blue else "GREEN"
         data = {
@@ -556,6 +570,7 @@ class ScoreboardWindow(tk.Toplevel):
                           text=self._timeout_display_text(side),
                           font=data["font"],
                           fill=data["color"])
+        canvas.coords(data["text"], size/2, size/2)
         canvas.itemconfig(data["circle"],
                           outline=data["color"],
                           width=max(3, int(size * 0.08)))
@@ -578,6 +593,49 @@ class ScoreboardWindow(tk.Toplevel):
 
         self.timeout_counts[side] = current + 1
         self._update_timeout_widget(side)
+
+
+    def _maybe_trigger_jaza_pause(self) -> bool:
+        if self._should_trigger_jaza_pause():
+            self._enter_jaza_pause()
+            return True
+        return False
+
+
+    def _should_trigger_jaza_pause(self) -> bool:
+        if self.jaza_active or self.jaza_consumed or self.match_over:
+            return False
+        if self.total_match_time <= 0:
+            return False
+        if self.time_left > self.total_match_time / 2:
+            return False
+        if any(self.blue) or any(self.green):
+            return False
+        return True
+
+
+    def _enter_jaza_pause(self):
+        if self.jaza_active:
+            return
+        if self.after_id:
+            try:
+                self.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+        self.running = False
+        self.jaza_active = True
+        self.jaza_consumed = True
+        self.winner_lbl.config(text="JAZA", bg="#ffe000", fg="black")
+
+
+    def _resume_from_jaza(self):
+        if not self.jaza_active or self.match_over:
+            return
+        self.jaza_active = False
+        self._show_winner("")
+        self.running = True
+        self.after_id = self.after(1000, self._tick)
 
 
     def _apply_penalty_side_effects(self, is_blue: bool, idx: int, delta: int):
@@ -605,6 +663,7 @@ class ScoreboardWindow(tk.Toplevel):
             except Exception:
                 pass
             self.after_id = None
+        self.jaza_active = False
         self.match_over = True
         self._show_winner(winner)
 
@@ -619,8 +678,11 @@ class ScoreboardWindow(tk.Toplevel):
 
         if self.blue[c_idx] >= 3 or self.blue[y_idx] >= 2:
             self._finish_match_with_winner("GREEN")
-        elif self.green[c_idx] >= 3 or self.green[y_idx] >= 2:
+            return True
+        if self.green[c_idx] >= 3 or self.green[y_idx] >= 2:
             self._finish_match_with_winner("BLUE")
+            return True
+        return False
 
 
     def _clear_final_screen(self):
@@ -695,7 +757,10 @@ class ScoreboardWindow(tk.Toplevel):
         self.blue[idx] = new_val
         self._apply_penalty_side_effects(is_blue=True, idx=idx, delta=delta)
         self._refresh_digits()
-        self._check_penalty_end()
+        if self._check_halal(idx, is_blue=True, delta=delta):
+            return
+        if self._check_penalty_end():
+            return
  
     def _green_delta(self, idx, d):
         if self.match_over: return
@@ -708,7 +773,10 @@ class ScoreboardWindow(tk.Toplevel):
         self.green[idx] = new_val
         self._apply_penalty_side_effects(is_blue=False, idx=idx, delta=delta)
         self._refresh_digits()
-        self._check_penalty_end()
+        if self._check_halal(idx, is_blue=False, delta=delta):
+            return
+        if self._check_penalty_end():
+            return
 
 
     def _reset_all(self, _=None):
@@ -795,6 +863,8 @@ class ScoreboardWindow(tk.Toplevel):
         b("b", lambda e: self._show_winner("BLUE"))
         b("g", lambda e: self._show_winner("GREEN"))
         b("A", lambda e: self.auto_winner.set(not self.auto_winner.get()))
+        b("j", lambda e: self._resume_from_jaza())
+        b("J", lambda e: self._resume_from_jaza())
 
        
 
