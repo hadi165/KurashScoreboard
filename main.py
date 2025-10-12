@@ -55,7 +55,8 @@ FLAG_W, FLAG_H = 288, 192  # baseline flag size
 FLAG_BOOST = 1.6 
 
 # Default zoom for initial layout and Ctrl+0 reset (tune to your preference)
-DEFAULT_ZOOM = 0.6
+# Default zoom tuned so fullscreen layouts fit on common displays without manual adjustment
+DEFAULT_ZOOM = 0.55
 
 # If False, ignore OS DPI scaling to avoid oversized UI on high scaling
 RESPECT_DPI = False
@@ -169,6 +170,7 @@ class ScoreboardWindow(tk.Toplevel):
         self.total_match_time = self.time_left
         self.jaza_active = False
         self.jaza_consumed = False
+        self.final_reason = ""
         self.scale=1.0
         self.zoom=DEFAULT_ZOOM  # default zoom (you can adjust in-app)
         self.match_over = False  # lock scoring once the match is finished
@@ -407,6 +409,8 @@ class ScoreboardWindow(tk.Toplevel):
         btn("Blue WINNER (b)",  lambda: self._show_winner("BLUE"))
         btn("Green WINNER (g)", lambda: self._show_winner("GREEN"))
         btn("Clear WINNER",     lambda: self._show_winner(""))
+        btn("Blue HALAL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
+        btn("Green HALAL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
         btn("Fullscreen (F11)", lambda: self._toggle_fullscreen())
         btn("Zoom +",           self._zoom_in)
         btn("Zoom -",           self._zoom_out)
@@ -455,6 +459,7 @@ class ScoreboardWindow(tk.Toplevel):
 
         self.running = False
         self.jaza_active = False
+        self.final_reason = ""
         self._update_time()
         self._buzz()
 
@@ -484,6 +489,7 @@ class ScoreboardWindow(tk.Toplevel):
             self._show_winner("")
         self.jaza_active = False
         self.jaza_consumed = False
+        self.final_reason = ""
         self._update_time()
 
     def _refresh_digits(self):
@@ -597,6 +603,14 @@ class ScoreboardWindow(tk.Toplevel):
         self._update_timeout_widget(side)
 
 
+    def _handle_halal_hotkey(self, side: str, event=None):
+        if self.match_over:
+            return "break" if event is not None else None
+        winner = "BLUE" if side == "BLUE" else "GREEN"
+        self._finish_match_with_winner(winner, reason="HALAL")
+        return "break" if event is not None else None
+
+
 
 
     def _maybe_trigger_jaza_pause(self) -> bool:
@@ -656,7 +670,7 @@ class ScoreboardWindow(tk.Toplevel):
             opponent[LABEL_TO_INDEX["Y"]] = clamp(opponent[LABEL_TO_INDEX["Y"]] + delta)
 
 
-    def _finish_match_with_winner(self, winner: str):
+    def _finish_match_with_winner(self, winner: str, reason: str = ""):
         """Stop the match immediately and declare the winner."""
         if self.match_over:
             return
@@ -668,8 +682,9 @@ class ScoreboardWindow(tk.Toplevel):
                 pass
             self.after_id = None
         self.jaza_active = False
+        self.final_reason = reason or ""
         self.match_over = True
-        self._show_winner(winner)
+        self._show_winner(winner, reason)
 
 
     def _check_penalty_end(self):
@@ -699,7 +714,7 @@ class ScoreboardWindow(tk.Toplevel):
         self.final_frame = None
 
 
-    def _show_final_winner_screen(self, who: str):
+    def _show_final_winner_screen(self, who: str, reason: str = ""):
         """Cover the UI with a full-screen winner card."""
         self.match_over = True
         self._clear_final_screen()
@@ -725,6 +740,11 @@ class ScoreboardWindow(tk.Toplevel):
         tk.Label(self.final_frame, text="WINNER", bg=bg, fg=fg, font=code_font, pady=10).pack(pady=(30, 10))
         tk.Label(self.final_frame, text=name,   bg=bg, fg=fg, font=name_font).pack(pady=(10, 10))
         tk.Label(self.final_frame, text=code,   bg=bg, fg=fg, font=code_font).pack(pady=(0, 30))
+
+        if reason == "HALAL":
+            tk.Label(self.final_frame, text='WINS BY "HALAL"', bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
+        elif reason:
+            tk.Label(self.final_frame, text=reason, bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
 
         tk.Label(self.final_frame, text="Press 0 to reset", bg=bg, fg=fg, font=hint_font).pack(pady=(20, 10))
 
@@ -789,6 +809,7 @@ class ScoreboardWindow(tk.Toplevel):
         self._reset_time()
         self._refresh_digits()
         self._update_timeout_widgets()
+        self.final_reason = ""
         self._show_winner("")  # clear mini ribbon
 
 
@@ -796,20 +817,32 @@ class ScoreboardWindow(tk.Toplevel):
         b,g = sum(self.blue), sum(self.green)
         self._show_winner("BLUE" if b>g else "GREEN" if g>b else "")
 
-    def _show_winner(self, who: str):
+    def _show_winner(self, who: str, reason: str = ""):
         # Keep small ribbon (if you still want it mid-match)
         if not who:
             self.winner_lbl.config(text="", bg="black", fg="black")
+            self.final_reason = ""
             return
 
+        self.final_reason = reason or ""
+        reason_display = self.final_reason
+
         if who == "BLUE":
-            self.winner_lbl.config(text=f"{self.cfg['name1']} WINS", bg="#1976d2", fg="white")
+            if reason_display == "HALAL":
+                text = 'Blue competitor wins by "HALAL"'
+            else:
+                text = f"{self.cfg['name1']} WINS"
+            self.winner_lbl.config(text=text, bg="#1976d2", fg="white")
         elif who == "GREEN":
-            self.winner_lbl.config(text=f"{self.cfg['name2']} WINS", bg="#00e676", fg="black")
+            if reason_display == "HALAL":
+                text = 'Green competitor wins by "HALAL"'
+            else:
+                text = f"{self.cfg['name2']} WINS"
+            self.winner_lbl.config(text=text, bg="#00e676", fg="black")
 
         # If match already ended (or you just want to force the final screen), show overlay too
         if not self.running and self.time_left == 0 or self.match_over:
-            self._show_final_winner_screen(who)
+            self._show_final_winner_screen(who, reason_display)
 
 
 
@@ -865,6 +898,8 @@ class ScoreboardWindow(tk.Toplevel):
         b("A", lambda e: self.auto_winner.set(not self.auto_winner.get()))
         b("j", lambda e: self._resume_from_jaza())
         b("J", lambda e: self._resume_from_jaza())
+        b("<Shift-B>", lambda e: self._handle_halal_hotkey("BLUE", e))
+        b("<Shift-G>", lambda e: self._handle_halal_hotkey("GREEN", e))
 
        
 
