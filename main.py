@@ -74,6 +74,13 @@ def parse_code(s:str)->str:
     m=re.search(r"\(([A-Za-z]{2,3})\)$", s.strip()); return (m.group(1) if m else s.strip())[:3].upper()
 def clamp(n, lo=0, hi=99): return max(lo, min(hi, n))
 
+# Order of score buckets as rendered left → right
+SCORE_LABELS = ("G", "Y", "C", "D", "T")
+LABEL_COLORS = {"D": "#ff5252", "T": "#ff5252"}
+LABEL_TO_INDEX = {label: idx for idx, label in enumerate(SCORE_LABELS)}
+SCORE_COUNT = len(SCORE_LABELS)
+MAX_TIMEOUTS = 2
+
 # ---------------- Config ----------------
 class ConfigWindow(tk.Tk):
     def __init__(self):
@@ -156,10 +163,13 @@ class ScoreboardWindow(tk.Toplevel):
         self.running=False; self.after_id=None
         self.auto_winner = tk.BooleanVar(value=True)
 
-        self.blue=[0,0,0,0]; self.green=[0,0,0,0]
+        self.blue=[0]*SCORE_COUNT; self.green=[0]*SCORE_COUNT
+        self.timeout_counts = {"BLUE": 0, "GREEN": 0}
+        self.timeout_widgets = {}
         self.scale=1.0
         self.zoom=DEFAULT_ZOOM  # default zoom (you can adjust in-app)
         self.match_over = False  # lock scoring once the match is finished
+        self.final_frame = None  # placeholder for full-screen overlay
 
         # Named fonts (resize together)
         self.f_time    = tkfont.Font(family="Arial", weight="bold", size=BASE["TIME"])
@@ -205,6 +215,7 @@ class ScoreboardWindow(tk.Toplevel):
         pad = max(12, int(24*s))
         for cell in getattr(self, "b_cells", []): cell.grid_configure(padx=pad)
         for cell in getattr(self, "g_cells", []): cell.grid_configure(padx=pad)
+        self._update_timeout_widgets()
 
     def _zoom_in(self):  self.zoom = min(3.0, self.zoom*1.08); self._apply_scale()
     def _zoom_out(self): self.zoom = max(0.35, self.zoom/1.08); self._apply_scale()
@@ -304,16 +315,19 @@ class ScoreboardWindow(tk.Toplevel):
         # digits + labels in one grid
         self.b_digits_frame = tk.Frame(blue_row, bg="black"); self.b_digits_frame.pack(side="left")
         self.b_digits, self.b_cells = [], []
-        for i in range(4):
+        for i, letter in enumerate(SCORE_LABELS):
             cell = tk.Frame(self.b_digits_frame, bg="#222"); cell.grid(row=0, column=i, padx=24)
             lbl  = tk.Label(cell, text="0", fg="white", bg="#222", font=self.f_digit, width=2); lbl.pack()
             self.b_cells.append(cell); self.b_digits.append(lbl)
             # NEW: make the box clickable for Blue
             self._attach_score_clicks(cell, lbl, is_blue=True, idx=i)
 
-            tk.Label(self.b_digits_frame, text=("Y","C","D","T")[i],
-                    fg="#ffe000", bg="black", font=self.f_label).grid(row=1, column=i, pady=(8,0))
+            fg = LABEL_COLORS.get(letter, "#ffe000")
+            tk.Label(self.b_digits_frame, text=letter,
+                    fg=fg, bg="black", font=self.f_label).grid(row=1, column=i, pady=(8,0))
         
+        self._create_timeout_control(blue_row, is_blue=True)
+
         tk.Frame(blue_row, bg="black").pack(side="left", expand=True)
 
 
@@ -355,16 +369,19 @@ class ScoreboardWindow(tk.Toplevel):
         # digits + labels in one grid
         self.g_digits_frame = tk.Frame(green_row, bg="black"); self.g_digits_frame.pack(side="left")
         self.g_digits, self.g_cells = [], []
-        for i in range(4):
+        for i, letter in enumerate(SCORE_LABELS):
             cell = tk.Frame(self.g_digits_frame, bg="#222"); cell.grid(row=0, column=i, padx=24)
             lbl  = tk.Label(cell, text="0", fg="white", bg="#222", font=self.f_digit, width=2); lbl.pack()
             self.g_cells.append(cell); self.g_digits.append(lbl)
 
-            # ✅ Make the green box clickable (this line was missing)
+            # Make the green box clickable as well
             self._attach_score_clicks(cell, lbl, is_blue=False, idx=i)
 
-            tk.Label(self.g_digits_frame, text=("Y","C","D","T")[i],
-                    fg="#ffe000", bg="black", font=self.f_label).grid(row=1, column=i, pady=(8,0))
+            fg = LABEL_COLORS.get(letter, "#ffe000")
+            tk.Label(self.g_digits_frame, text=letter,
+                    fg=fg, bg="black", font=self.f_label).grid(row=1, column=i, pady=(8,0))
+
+        self._create_timeout_control(green_row, is_blue=False)
 
         tk.Frame(green_row, bg="black").pack(side="left", expand=True)
 
@@ -403,22 +420,44 @@ class ScoreboardWindow(tk.Toplevel):
         if not self.running:
             return
 
+        # clear previous handle; we'll set a new one if needed
+        self.after_id = None
+
         if self.time_left > 0:
             self.time_left -= 1
             self._update_time()
-            self.after_id = self.after(1000, self._tick)
-        else:
-            self.running = False
-            self._buzz()
-
-            # decide winner and show full-screen overlay
-            b, g = sum(self.blue), sum(self.green)
-            if b > g:
-                self._show_final_winner_screen("BLUE")
-            elif g > b:
-                self._show_final_winner_screen("GREEN")
+            if self.time_left <= 0:
+                self._handle_time_expired()
             else:
-                self._show_tie_screen()
+                self.after_id = self.after(1000, self._tick)
+        else:
+            self._handle_time_expired()
+
+
+    def _handle_time_expired(self):
+        """Stop timer immediately and show final result."""
+        if self.time_left < 0:
+            self.time_left = 0
+
+        if self.after_id:
+            try:
+                self.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+
+        self.running = False
+        self._update_time()
+        self._buzz()
+
+        # decide winner and show full-screen overlay
+        b, g = sum(self.blue), sum(self.green)
+        if b > g:
+            self._show_final_winner_screen("BLUE")
+        elif g > b:
+            self._show_final_winner_screen("GREEN")
+        else:
+            self._show_tie_screen()
 
 
     def _toggle_timer(self,_=None):
@@ -464,84 +503,223 @@ class ScoreboardWindow(tk.Toplevel):
             w.bind("<Button-3>", dec)          # right click -1 (on macOS, ctrl+click also generates this)
             w.bind("<Double-Button-1>", reset_bucket)  # double-left resets this bucket
 
-        def _clear_final_screen(self):
-            """Remove final overlay if present."""
-            if hasattr(self, "final_frame") and self.final_frame:
-                try:
-                    self.final_frame.destroy()
-                except Exception:
-                    pass
-                self.final_frame = None
 
-        def _show_final_winner_screen(self, who: str):
-            """Cover the UI with a full-screen winner card."""
-            self.match_over = True
-            self._clear_final_screen()
+    def _create_timeout_control(self, parent, is_blue: bool):
+        """Create the circular timeout control for a competitor."""
+        holder = tk.Frame(parent, bg="black")
+        holder.pack(side="left", padx=(20, 10))
 
-            if who == "BLUE":
-                bg, fg = "#1976d2", "white"
-                name, code = self.cfg.get("name1",""), self.cfg.get("code1","")
-            elif who == "GREEN":
-                bg, fg = "#00e676", "black"
-                name, code = self.cfg.get("name2",""), self.cfg.get("code2","")
-            else:
-                # Fallback to tie screen if unknown
-                return self._show_tie_screen()
+        canvas = tk.Canvas(holder, width=80, height=80, bg="black", highlightthickness=0, cursor="hand2")
+        canvas.pack()
 
-            s = self._calc_scale()
-            name_font = tkfont.Font(family="Arial", weight="bold", size=max(60, int(BASE["TIME"] * s)))
-            code_font = tkfont.Font(family="Arial", weight="bold", size=max(48, int(BASE["TIME"] * 0.5 * s)))
-            hint_font = tkfont.Font(family="Arial", weight="bold", size=max(24, int(28 * s)))
+        color = "#1976d2" if is_blue else "#00e676"
+        circle = canvas.create_oval(10, 10, 70, 70, outline=color, width=4)
+        font = tkfont.Font(family="Arial", weight="bold", size=32)
+        text = canvas.create_text(40, 40, text="+", fill=color, font=font)
 
-            self.final_frame = tk.Frame(self, bg=bg)
-            self.final_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        side = "BLUE" if is_blue else "GREEN"
+        data = {
+            "canvas": canvas,
+            "circle": circle,
+            "text": text,
+            "font": font,
+            "color": color,
+            "holder": holder,
+            "side": side,
+        }
+        self.timeout_widgets[side] = data
 
-            tk.Label(self.final_frame, text="WINNER", bg=bg, fg=fg, font=code_font, pady=10).pack(pady=(30, 10))
-            tk.Label(self.final_frame, text=name,   bg=bg, fg=fg, font=name_font).pack(pady=(10, 10))
-            tk.Label(self.final_frame, text=code,   bg=bg, fg=fg, font=code_font).pack(pady=(0, 30))
-            tk.Label(self.final_frame, text="Press 0 to reset", bg=bg, fg=fg, font=hint_font).pack(pady=(10, 10))
+        canvas.bind("<Button-1>", lambda e, s=side: self._handle_timeout_click(s))
+        canvas.bind("<Return>", lambda e, s=side: self._handle_timeout_click(s))
+        self._update_timeout_widget(side)
 
-        def _show_tie_screen(self):
-            """Show neutral screen for tie; lets you pick winner with keys w/m or reset with 0."""
-            self.match_over = True
-            self._clear_final_screen()
 
-            s = self._calc_scale()
-            big_font  = tkfont.Font(family="Arial", weight="bold", size=max(60, int(BASE["TIME"] * 0.8 * s)))
-            mid_font  = tkfont.Font(family="Arial", weight="bold", size=max(40, int(BASE["TIME"] * 0.4 * s)))
-            hint_font = tkfont.Font(family="Arial", weight="bold", size=max(24, int(28 * s)))
+    def _timeout_display_text(self, side: str) -> str:
+        count = self.timeout_counts.get(side, 0)
+        return "+" if count == 0 else str(count)
 
-            bg, fg, acc = "black", "#ffe000", "#cccccc"
-            self.final_frame = tk.Frame(self, bg=bg)
-            self.final_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-            tk.Label(self.final_frame, text="TIME UP — TIE", bg=bg, fg=fg, font=big_font).pack(pady=(40, 20))
-            tk.Label(self.final_frame, text=f"{self.cfg.get('name1','')} ({self.cfg.get('code1','')})",
-                    bg=bg, fg=acc, font=mid_font).pack(pady=5)
-            tk.Label(self.final_frame, text=f"{self.cfg.get('name2','')} ({self.cfg.get('code2','')})",
-                    bg=bg, fg=acc, font=mid_font).pack(pady=5)
-            tk.Label(self.final_frame, text="Press W for Blue win, M for Green win, or 0 to reset.",
-                    bg=bg, fg=fg, font=hint_font).pack(pady=(20, 10))
+    def _update_timeout_widget(self, side: str):
+        data = self.timeout_widgets.get(side)
+        if not data:
+            return
 
+        canvas = data["canvas"]
+        size = max(64, int(120 * self.scale))
+        margin = max(6, int(size * 0.12))
+        canvas.config(width=size, height=size)
+        canvas.coords(data["circle"], margin, margin, size - margin, size - margin)
+
+        font_size = max(18, int(size * 0.4))
+        data["font"].configure(size=font_size)
+        canvas.itemconfig(data["text"],
+                          text=self._timeout_display_text(side),
+                          font=data["font"],
+                          fill=data["color"])
+        canvas.itemconfig(data["circle"],
+                          outline=data["color"],
+                          width=max(3, int(size * 0.08)))
+
+
+    def _update_timeout_widgets(self):
+        for side in ("BLUE", "GREEN"):
+            self._update_timeout_widget(side)
+
+
+    def _handle_timeout_click(self, side: str):
+        if self.match_over:
+            return
+
+        current = self.timeout_counts.get(side, 0)
+        if current >= MAX_TIMEOUTS:
+            opponent = "GREEN" if side == "BLUE" else "BLUE"
+            self._finish_match_with_winner(opponent)
+            return
+
+        self.timeout_counts[side] = current + 1
+        self._update_timeout_widget(side)
+
+
+    def _apply_penalty_side_effects(self, is_blue: bool, idx: int, delta: int):
+        """Mirror T/D penalties to the opponent (gives them C or Y)."""
+        if delta == 0:
+            return
+
+        opponent = self.green if is_blue else self.blue
+
+        label = SCORE_LABELS[idx]
+        if label == "T":  # T gives opponent a C
+            opponent[LABEL_TO_INDEX["C"]] = clamp(opponent[LABEL_TO_INDEX["C"]] + delta)
+        elif label == "D":  # D gives opponent a Y
+            opponent[LABEL_TO_INDEX["Y"]] = clamp(opponent[LABEL_TO_INDEX["Y"]] + delta)
+
+
+    def _finish_match_with_winner(self, winner: str):
+        """Stop the match immediately and declare the winner."""
+        if self.match_over:
+            return
+        self.running = False
+        if self.after_id:
+            try:
+                self.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+        self.match_over = True
+        self._show_winner(winner)
+
+
+    def _check_penalty_end(self):
+        """End the match if penalty thresholds reached."""
+        if self.match_over:
+            return
+
+        c_idx = LABEL_TO_INDEX["C"]
+        y_idx = LABEL_TO_INDEX["Y"]
+
+        if self.blue[c_idx] >= 3 or self.blue[y_idx] >= 2:
+            self._finish_match_with_winner("GREEN")
+        elif self.green[c_idx] >= 3 or self.green[y_idx] >= 2:
+            self._finish_match_with_winner("BLUE")
+
+
+    def _clear_final_screen(self):
+        """Remove final overlay if present."""
+        if getattr(self, "final_frame", None):
+            try:
+                self.final_frame.destroy()
+            except Exception:
+                pass
+        self.final_frame = None
+
+
+    def _show_final_winner_screen(self, who: str):
+        """Cover the UI with a full-screen winner card."""
+        self.match_over = True
+        self._clear_final_screen()
+
+        if who == "BLUE":
+            bg, fg = "#1976d2", "white"
+            name, code = self.cfg.get("name1",""), self.cfg.get("code1","")
+        elif who == "GREEN":
+            bg, fg = "#00e676", "black"
+            name, code = self.cfg.get("name2",""), self.cfg.get("code2","")
+        else:
+            # Fallback to tie screen if unknown
+            return self._show_tie_screen()
+
+        s = self._calc_scale()
+        name_font = tkfont.Font(family="Arial", weight="bold", size=max(60, int(BASE["TIME"] * s)))
+        code_font = tkfont.Font(family="Arial", weight="bold", size=max(48, int(BASE["TIME"] * 0.5 * s)))
+        hint_font = tkfont.Font(family="Arial", weight="bold", size=max(24, int(28 * s)))
+
+        self.final_frame = tk.Frame(self, bg=bg)
+        self.final_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        tk.Label(self.final_frame, text="WINNER", bg=bg, fg=fg, font=code_font, pady=10).pack(pady=(30, 10))
+        tk.Label(self.final_frame, text=name,   bg=bg, fg=fg, font=name_font).pack(pady=(10, 10))
+        tk.Label(self.final_frame, text=code,   bg=bg, fg=fg, font=code_font).pack(pady=(0, 30))
+        tk.Label(self.final_frame, text="Press 0 to reset", bg=bg, fg=fg, font=hint_font).pack(pady=(10, 10))
+
+
+    def _show_tie_screen(self):
+        """Show neutral screen for tie; lets you pick winner with keys w/m or reset with 0."""
+        self.match_over = True
+        self._clear_final_screen()
+
+        s = self._calc_scale()
+        big_font  = tkfont.Font(family="Arial", weight="bold", size=max(60, int(BASE["TIME"] * 0.8 * s)))
+        mid_font  = tkfont.Font(family="Arial", weight="bold", size=max(40, int(BASE["TIME"] * 0.4 * s)))
+        hint_font = tkfont.Font(family="Arial", weight="bold", size=max(24, int(28 * s)))
+
+        bg, fg, acc = "black", "#ffe000", "#cccccc"
+        self.final_frame = tk.Frame(self, bg=bg)
+        self.final_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+        tk.Label(self.final_frame, text="TIME UP - TIE", bg=bg, fg=fg, font=big_font).pack(pady=(40, 20))
+        tk.Label(self.final_frame, text=f"{self.cfg.get('name1','')} ({self.cfg.get('code1','')})",
+                bg=bg, fg=acc, font=mid_font).pack(pady=5)
+        tk.Label(self.final_frame, text=f"{self.cfg.get('name2','')} ({self.cfg.get('code2','')})",
+                bg=bg, fg=acc, font=mid_font).pack(pady=5)
+        tk.Label(self.final_frame, text="Press W for Blue win, M for Green win, or 0 to reset.",
+                bg=bg, fg=fg, font=hint_font).pack(pady=(20, 10))
 
     def _blue_delta(self, idx, d):
         if self.match_over: return
-        self.blue[idx] = clamp(self.blue[idx] + d)
+        prev = self.blue[idx]
+        new_val = clamp(prev + d)
+        delta = new_val - prev
+        if delta == 0:
+            return
+
+        self.blue[idx] = new_val
+        self._apply_penalty_side_effects(is_blue=True, idx=idx, delta=delta)
         self._refresh_digits()
+        self._check_penalty_end()
  
     def _green_delta(self, idx, d):
         if self.match_over: return
-        self.green[idx] = clamp(self.green[idx] + d)
+        prev = self.green[idx]
+        new_val = clamp(prev + d)
+        delta = new_val - prev
+        if delta == 0:
+            return
+
+        self.green[idx] = new_val
+        self._apply_penalty_side_effects(is_blue=False, idx=idx, delta=delta)
         self._refresh_digits()
+        self._check_penalty_end()
 
 
     def _reset_all(self, _=None):
-        self.blue = [0,0,0,0]
-        self.green = [0,0,0,0]
+        self.blue = [0]*SCORE_COUNT
+        self.green = [0]*SCORE_COUNT
+        self.timeout_counts = {"BLUE": 0, "GREEN": 0}
         self.match_over = False
         self._clear_final_screen()
         self._reset_time()
         self._refresh_digits()
+        self._update_timeout_widgets()
         self._show_winner("")  # clear mini ribbon
 
 
@@ -595,18 +773,23 @@ class ScoreboardWindow(tk.Toplevel):
         b("<Control-Key-0>",   lambda e: self._zoom_reset())  # ctrl+0
 
         # Blue +/- (Y C D T)
-        b("r", lambda e: self._blue_delta(0,+1)); b("R", lambda e: self._blue_delta(0,-1))
-        b("h", lambda e: self._blue_delta(0,+1)); b("H", lambda e: self._blue_delta(0,-1))
-        b("y", lambda e: self._blue_delta(1,+1)); b("Y", lambda e: self._blue_delta(1,-1))
-        b("c", lambda e: self._blue_delta(2,+1)); b("C", lambda e: self._blue_delta(2,-1))
-        b("v", lambda e: self._blue_delta(3,+1)); b("V", lambda e: self._blue_delta(3,-1))
+        idx_y = LABEL_TO_INDEX["Y"]
+        idx_c = LABEL_TO_INDEX["C"]
+        idx_d = LABEL_TO_INDEX["D"]
+        idx_t = LABEL_TO_INDEX["T"]
+
+        b("r", lambda e: self._blue_delta(idx_y,+1)); b("R", lambda e: self._blue_delta(idx_y,-1))
+        b("h", lambda e: self._blue_delta(idx_y,+1)); b("H", lambda e: self._blue_delta(idx_y,-1))
+        b("y", lambda e: self._blue_delta(idx_c,+1)); b("Y", lambda e: self._blue_delta(idx_c,-1))
+        b("c", lambda e: self._blue_delta(idx_d,+1)); b("C", lambda e: self._blue_delta(idx_d,-1))
+        b("v", lambda e: self._blue_delta(idx_t,+1)); b("V", lambda e: self._blue_delta(idx_t,-1))
 
         # Green +/- (Y C D T)
-        b("b", lambda e: self._green_delta(0,+1)); b("B", lambda e: self._green_delta(0,-1))
-        b("n", lambda e: self._green_delta(0,+1)); b("N", lambda e: self._green_delta(0,-1))
-        b("k", lambda e: self._green_delta(1,+1)); b("K", lambda e: self._green_delta(1,-1))
-        b("l", lambda e: self._green_delta(2,+1)); b("L", lambda e: self._green_delta(2,-1))
-        b(";", lambda e: self._green_delta(3,+1)); b(":", lambda e: self._green_delta(3,-1))
+        b("b", lambda e: self._green_delta(idx_y,+1)); b("B", lambda e: self._green_delta(idx_y,-1))
+        b("n", lambda e: self._green_delta(idx_y,+1)); b("N", lambda e: self._green_delta(idx_y,-1))
+        b("k", lambda e: self._green_delta(idx_c,+1)); b("K", lambda e: self._green_delta(idx_c,-1))
+        b("l", lambda e: self._green_delta(idx_d,+1)); b("L", lambda e: self._green_delta(idx_d,-1))
+        b(";", lambda e: self._green_delta(idx_t,+1)); b(":", lambda e: self._green_delta(idx_t,-1))
 
         # Winner & auto
         b("b", lambda e: self._show_winner("BLUE"))

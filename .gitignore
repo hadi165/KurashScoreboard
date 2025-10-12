@@ -1,10 +1,24 @@
-﻿__pycache__/
-*.pyc
-.env
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pdb
+*.spec
+
+# Envs
+.venv/
 venv/
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# Build outputs
 build/
 dist/
-*.spec
-Flags/
-Sounds/
+*.egg-info/
 
+# OS
+.DS_Store
+Thumbs.db
