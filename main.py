@@ -65,13 +65,14 @@ DEFAULT_ZOOM = 0.54
 RESPECT_DPI = False
 
 COUNTRIES = [
-    ("India","IND"),("Chinese Taipei","TPE"),("Singapore","SGP"),("Malaysia","MAS"),
-    ("Indonesia","INA"),("Philippines","PHI"),("Thailand","THA"),("South Korea","KOR"),
-    ("Vietnam","VIE"),("Japan","JPN"),("Uzbekistan","UZB"),("Afghanistan","AFG"),
-    ("Aruba (example AHO)","AHO"),
+    ("Afghanistan","AFG"),("Bahrain","BRN"),("Chinese Taipei","TPE"),("Hong Kong","HKG"),
+    ("India","IND"),("Indonesia","INA"),("Iran","IRI"),("Iraq","IRQ"),
+    ("Japan","JPN"),("Kazakhstan","KAZ"),("Malaysia","MAS"),("Philippines","PHI"),
+    ("Qatar","QAT"),("Saudi Arabia","KSA"),("Singapore","SGP"),("South Korea","KOR"),
+    ("Tajikistan","TJK"),("Thailand","THA"),("Uzbekistan","UZB"),("Vietnam","VIE"),
 ]
-WEIGHTS = ["-48Kg","-52Kg","-57Kg","-60Kg","-63Kg","-66Kg","-70Kg","-73Kg",
-           "-78Kg","-81Kg","-87Kg","+87Kg","-90Kg","-100Kg","+100Kg","-120Kg","+120Kg"]
+WEIGHTS = ["-48Kg","-52Kg","-57Kg","-60Kg","-63Kg","-65Kg","-66Kg","-70Kg","-73Kg",
+           "-78Kg","-81Kg","-83Kg","-87Kg","+87Kg","-90Kg","-100Kg","+100Kg","-120Kg","+120Kg"]
 
 def country_values(): return [f"{n} ({c})" for n,c in COUNTRIES]
 def parse_code(s:str)->str:
@@ -446,6 +447,7 @@ class ScoreboardWindow(tk.Toplevel):
         btn("Start/Pause (Space)", self._toggle_timer)
         btn("Reset Time (t)", self._reset_time)
         btn("All Reset (0)", self._reset_all)
+        btn("New Match",     self._new_match)
         btn("Blue WINNER (b)",  lambda: self._show_winner("BLUE"))
         btn("Green WINNER (g)", lambda: self._show_winner("GREEN"))
         btn("Clear WINNER",     lambda: self._show_winner(""))
@@ -854,6 +856,26 @@ class ScoreboardWindow(tk.Toplevel):
         self._show_winner("")  # clear mini ribbon
 
 
+    def _new_match(self):
+        baseline_time = self.cfg["mm"]*60 + self.cfg["ss"]
+        in_progress = self.running or (
+            not self.match_over and (
+                any(self.blue) or any(self.green) or
+                self.timeout_counts.get("BLUE", 0) or
+                self.timeout_counts.get("GREEN", 0) or
+                self.time_left != baseline_time
+            )
+        )
+        if in_progress:
+            confirm = messagebox.askyesno(
+                "Confirm New Match",
+                "The current match is still in progress.\nReturn to setup for new players?"
+            )
+            if not confirm:
+                return
+        self._close()
+
+
     def _auto_winner(self):
         b,g = sum(self.blue), sum(self.green)
         self._show_winner("BLUE" if b>g else "GREEN" if g>b else "")
@@ -947,7 +969,17 @@ class ScoreboardWindow(tk.Toplevel):
        
 
     def _on_resize(self, _): self.after_idle(self._apply_scale)
-    def _close(self): self.destroy(); self.root.deiconify()
+    def _close(self):
+        if self.after_id:
+            try:
+                self.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+        self.running = False
+        self.destroy()
+        self.root.deiconify()
+        self.root.focus_force()
 
 # ---------------- main ----------------
 def main(): ConfigWindow().mainloop()
