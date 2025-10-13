@@ -179,6 +179,13 @@ class ScoreboardWindow(tk.Toplevel):
         self.zoom=DEFAULT_ZOOM  # default zoom (you can adjust in-app)
         self.match_over = False  # lock scoring once the match is finished
         self.final_frame = None  # placeholder for full-screen overlay
+        self._winner_flag_img = None
+        self._event_counter = 0
+        self._last_cy_event = None  # (side, label, seq)
+        self._last_dt_event = None  # (side, label, seq)
+        self._pending_auto_winner = None
+        self._auto_winner_after_id = None
+        self.auto_deciding = False
 
         # Named fonts (resize together)
         self.f_time    = tkfont.Font(family="Arial", weight="bold", size=BASE["TIME"])
@@ -451,8 +458,8 @@ class ScoreboardWindow(tk.Toplevel):
         btn("Blue WINNER (b)",  lambda: self._show_winner("BLUE"))
         btn("Green WINNER (g)", lambda: self._show_winner("GREEN"))
         btn("Clear WINNER",     lambda: self._show_winner(""))
-        btn("Blue HALAL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
-        btn("Green HALAL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
+        btn("Blue HALOL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
+        btn("Green HALOL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
         btn("Resume JAZZO (J)",  self._resume_from_jaza)
         btn("Fullscreen (F11)", lambda: self._toggle_fullscreen())
         btn("Zoom +",           self._zoom_in)
@@ -509,11 +516,16 @@ class ScoreboardWindow(tk.Toplevel):
         # decide winner and show full-screen overlay
         b, g = sum(self.blue), sum(self.green)
         if b > g:
-            self._show_final_winner_screen("BLUE")
+            self._schedule_auto_win("BLUE", "POINT ADVANTAGE")
         elif g > b:
-            self._show_final_winner_screen("GREEN")
+            self._schedule_auto_win("GREEN", "POINT ADVANTAGE")
         else:
-            self._show_tie_screen()
+            resolved = self._resolve_draw_by_last_event()
+            if resolved:
+                winner, reason = resolved
+                self._schedule_auto_win(winner, reason)
+            else:
+                self._show_tie_screen()
 
 
     def _toggle_timer(self,_=None):
@@ -538,6 +550,26 @@ class ScoreboardWindow(tk.Toplevel):
     def _refresh_digits(self):
         for i,l in enumerate(self.b_digits): l.config(text=str(self.blue[i]))
         for i,l in enumerate(self.g_digits): l.config(text=str(self.green[i]))
+
+    def _cancel_pending_auto_winner(self):
+        if self._auto_winner_after_id:
+            try:
+                self.after_cancel(self._auto_winner_after_id)
+            except Exception:
+                pass
+            self._auto_winner_after_id = None
+        self._pending_auto_winner = None
+        self.auto_deciding = False
+
+    def _record_score_event(self, side: str, label: str, delta: int):
+        if delta <= 0:
+            return
+        self._event_counter += 1
+        seq = self._event_counter
+        if label in ("C", "Y"):
+            self._last_cy_event = (side, label, seq)
+        elif label in ("D", "T"):
+            self._last_dt_event = (side, label, seq)
 
     def _attach_score_clicks(self, cell_widget, lbl_widget, is_blue: bool, idx: int):
         """Bind mouse actions to a score cell (and its label)."""
@@ -565,7 +597,7 @@ class ScoreboardWindow(tk.Toplevel):
         # Bind on the cell AND the inner label so either area works
         for w in (cell_widget, lbl_widget):
             w.bind("<Button-1>", inc)          # left click  +1
-            w.bind("<Button-3>", dec)          # right click -1 (on macOS, ctrl+click also generates this)
+            w.bind("<Control-Button-1>", dec)  # ctrl+click -1
             w.bind("<Double-Button-1>", reset_bucket)  # double-left resets this bucket
 
 
@@ -639,7 +671,7 @@ class ScoreboardWindow(tk.Toplevel):
         current = self.timeout_counts.get(side, 0)
         if current >= MAX_TIMEOUTS:
             opponent = "GREEN" if side == "BLUE" else "BLUE"
-            self._finish_match_with_winner(opponent)
+            self._schedule_auto_win(opponent, "TIMEOUT LIMIT")
             return
 
         self.timeout_counts[side] = current + 1
@@ -650,7 +682,7 @@ class ScoreboardWindow(tk.Toplevel):
         if self.match_over:
             return "break" if event is not None else None
         winner = "BLUE" if side == "BLUE" else "GREEN"
-        self._finish_match_with_winner(winner, reason="HALAL")
+        self._finish_match_with_winner(winner, reason="HALOL")
         return "break" if event is not None else None
 
 
@@ -676,7 +708,7 @@ class ScoreboardWindow(tk.Toplevel):
 
 
     def _enter_jaza_pause(self):
-        if self.jaza_active:
+        if self.jaza_active or self.auto_deciding:
             return
         if self.after_id:
             try:
@@ -691,12 +723,52 @@ class ScoreboardWindow(tk.Toplevel):
 
 
     def _resume_from_jaza(self):
-        if not self.jaza_active or self.match_over:
+        if not self.jaza_active or self.match_over or self.auto_deciding:
             return
         self.jaza_active = False
         self._show_winner("")
         self.running = True
         self.after_id = self.after(1000, self._tick)
+
+    def _schedule_auto_win(self, winner: str, reason: str = ""):
+        """Stop the bout and delay automatic winner for 5s to allow overrides."""
+        if not winner:
+            return
+        existing = self._pending_auto_winner
+        if self.auto_deciding and existing and existing[0] == winner and existing[1] == reason:
+            return
+
+        self._cancel_pending_auto_winner()
+        self.auto_deciding = True
+        self.final_reason = reason or ""
+
+        # Halt timers / pauses
+        if self.after_id:
+            try:
+                self.after_cancel(self.after_id)
+            except Exception:
+                pass
+            self.after_id = None
+        self.running = False
+        self.jaza_active = False
+        self._clear_final_screen()
+
+        self._pending_auto_winner = (winner, reason)
+
+        name = self.cfg["name1"] if winner == "BLUE" else self.cfg["name2"]
+        bg = "#1976d2" if winner == "BLUE" else "#00e676"
+        fg = "white" if winner == "BLUE" else "black"
+        reason_text = reason or "AUTO DECISION"
+        self.winner_lbl.config(text="", bg="black", fg="black")
+        self._auto_winner_after_id = self.after(5000, self._apply_pending_auto_winner)
+
+    def _apply_pending_auto_winner(self):
+        pending = self._pending_auto_winner
+        self._cancel_pending_auto_winner()
+        if not pending or self.match_over:
+            return
+        winner, reason = pending
+        self._finish_match_with_winner(winner, reason)
 
 
     def _apply_penalty_side_effects(self, is_blue: bool, idx: int, delta: int):
@@ -705,16 +777,21 @@ class ScoreboardWindow(tk.Toplevel):
             return
 
         opponent = self.green if is_blue else self.blue
+        opponent_side = "GREEN" if is_blue else "BLUE"
 
         label = SCORE_LABELS[idx]
         if label == "G":
             winner = "GREEN" if is_blue else "BLUE"
-            self._finish_match_with_winner(winner, reason="G PENALTY")
+            self._schedule_auto_win(winner, "G PENALTY")
             return
         if label == "T":  # T gives opponent a C
             opponent[LABEL_TO_INDEX["C"]] = clamp(opponent[LABEL_TO_INDEX["C"]] + delta)
+            if delta > 0:
+                self._record_score_event(opponent_side, "C", delta)
         elif label == "D":  # D gives opponent a Y and removes any mirrored C from previous T
             opponent[LABEL_TO_INDEX["Y"]] = clamp(opponent[LABEL_TO_INDEX["Y"]] + delta)
+            if delta > 0:
+                self._record_score_event(opponent_side, "Y", delta)
             if delta > 0:
                 c_idx = LABEL_TO_INDEX["C"]
                 opponent[c_idx] = clamp(opponent[c_idx] - 1)
@@ -724,6 +801,7 @@ class ScoreboardWindow(tk.Toplevel):
         """Stop the match immediately and declare the winner."""
         if self.match_over:
             return
+        self._cancel_pending_auto_winner()
         self.running = False
         if self.after_id:
             try:
@@ -739,18 +817,38 @@ class ScoreboardWindow(tk.Toplevel):
 
     def _check_penalty_end(self):
         """End the match if penalty thresholds reached."""
-        if self.match_over:
-            return False
+        if self.match_over or self.auto_deciding:
+            return True
 
         y_idx = LABEL_TO_INDEX["Y"]
 
         if self.blue[y_idx] >= 2:
-            self._finish_match_with_winner("GREEN")
+            self._schedule_auto_win("GREEN", "Y PENALTIES")
             return True
         if self.green[y_idx] >= 2:
-            self._finish_match_with_winner("BLUE")
+            self._schedule_auto_win("BLUE", "Y PENALTIES")
             return True
         return False
+
+
+    def _resolve_draw_by_last_event(self):
+        latest = None
+        if self._last_cy_event:
+            side, label, seq = self._last_cy_event
+            latest = ("CY", side, label, seq)
+        if self._last_dt_event:
+            side, label, seq = self._last_dt_event
+            if not latest or seq > latest[3]:
+                latest = ("DT", side, label, seq)
+        if not latest:
+            return None
+
+        kind, side, label, _ = latest
+        if kind == "CY":
+            return side, f"LAST {label}"
+
+        winner = "GREEN" if side == "BLUE" else "BLUE"
+        return winner, f"LAST {label} PENALTY"
 
 
     def _clear_final_screen(self):
@@ -761,6 +859,7 @@ class ScoreboardWindow(tk.Toplevel):
             except Exception:
                 pass
         self.final_frame = None
+        self._winner_flag_img = None
 
 
     def _show_final_winner_screen(self, who: str, reason: str = ""):
@@ -783,15 +882,31 @@ class ScoreboardWindow(tk.Toplevel):
         code_font = tkfont.Font(family="Arial", weight="bold", size=max(40, int(BASE["TIME"] * 0.45 * s)))
         hint_font = tkfont.Font(family="Arial", weight="bold", size=max(24, int(28 * s)))
 
+        self._winner_flag_img = None
         self.final_frame = tk.Frame(self, bg=bg)
         self.final_frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         tk.Label(self.final_frame, text="WINNER", bg=bg, fg=fg, font=code_font, pady=10).pack(pady=(30, 10))
-        tk.Label(self.final_frame, text=name,   bg=bg, fg=fg, font=name_font).pack(pady=(10, 10))
-        tk.Label(self.final_frame, text=code,   bg=bg, fg=fg, font=code_font).pack(pady=(0, 30))
+        info = tk.Frame(self.final_frame, bg=bg)
+        info.pack(pady=(10, 10))
 
-        if reason == "HALAL":
-            tk.Label(self.final_frame, text='WINS BY "HALAL"', bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
+        tk.Label(info, text=name, bg=bg, fg=fg, font=name_font).pack(pady=(0, 6))
+
+        code_row = tk.Frame(info, bg=bg)
+        code_row.pack()
+
+        if self.cfg.get("show_flags"):
+            flag_w = max(40, int(FLAG_W * self.scale * FLAG_BOOST))
+            flag_h = max(28, int(FLAG_H * self.scale * FLAG_BOOST))
+            flag_img = self._load_flag_image(code, flag_w, flag_h)
+            if flag_img:
+                self._winner_flag_img = flag_img
+                tk.Label(code_row, image=self._winner_flag_img, bg=bg).pack(side="left", padx=(0, 16))
+
+        tk.Label(code_row, text=code, bg=bg, fg=fg, font=code_font).pack(side="left")
+
+        if reason == "HALOL":
+            tk.Label(self.final_frame, text='WINS BY "HALOL"', bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
         elif reason:
             tk.Label(self.final_frame, text=reason, bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
 
@@ -817,11 +932,11 @@ class ScoreboardWindow(tk.Toplevel):
                 bg=bg, fg=acc, font=mid_font).pack(pady=5)
         tk.Label(self.final_frame, text=f"{self.cfg.get('name2','')} ({self.cfg.get('code2','')})",
                 bg=bg, fg=acc, font=mid_font).pack(pady=5)
-        tk.Label(self.final_frame, text="Press W for Blue win, M for Green win, or 0 to reset.",
+        tk.Label(self.final_frame, text="Press B for Blue win, G for Green win, or 0 to reset.",
                 bg=bg, fg=fg, font=hint_font).pack(pady=(20, 10))
 
     def _blue_delta(self, idx, d):
-        if self.match_over: return
+        if self.match_over or self.auto_deciding: return
         prev = self.blue[idx]
         new_val = clamp(prev + d)
         delta = new_val - prev
@@ -829,13 +944,14 @@ class ScoreboardWindow(tk.Toplevel):
             return
 
         self.blue[idx] = new_val
+        self._record_score_event("BLUE", SCORE_LABELS[idx], delta)
         self._apply_penalty_side_effects(is_blue=True, idx=idx, delta=delta)
         self._refresh_digits()
         if self._check_penalty_end():
             return
 
     def _green_delta(self, idx, d):
-        if self.match_over: return
+        if self.match_over or self.auto_deciding: return
         prev = self.green[idx]
         new_val = clamp(prev + d)
         delta = new_val - prev
@@ -843,6 +959,7 @@ class ScoreboardWindow(tk.Toplevel):
             return
 
         self.green[idx] = new_val
+        self._record_score_event("GREEN", SCORE_LABELS[idx], delta)
         self._apply_penalty_side_effects(is_blue=False, idx=idx, delta=delta)
         self._refresh_digits()
         if self._check_penalty_end():
@@ -860,6 +977,10 @@ class ScoreboardWindow(tk.Toplevel):
         self._update_timeout_widgets()
         self.final_reason = ""
         self._show_winner("")  # clear mini ribbon
+        self._event_counter = 0
+        self._last_cy_event = None
+        self._last_dt_event = None
+        self._cancel_pending_auto_winner()
 
 
     def _new_match(self):
@@ -888,6 +1009,9 @@ class ScoreboardWindow(tk.Toplevel):
 
     def _show_winner(self, who: str, reason: str = ""):
         # Keep small ribbon (if you still want it mid-match)
+        was_auto_deciding = self.auto_deciding
+        if who:
+            self._cancel_pending_auto_winner()
         if not who:
             self.winner_lbl.config(text="", bg="black", fg="black")
             self.final_reason = ""
@@ -897,20 +1021,22 @@ class ScoreboardWindow(tk.Toplevel):
         reason_display = self.final_reason
 
         if who == "BLUE":
-            if reason_display == "HALAL":
-                text = 'Blue competitor wins by "HALAL"'
+            if reason_display == "HALOL":
+                text = 'Blue competitor wins by "HALOL"'
             else:
                 text = f"{self.cfg['name1']} WINS"
             self.winner_lbl.config(text=text, bg="#1976d2", fg="white")
         elif who == "GREEN":
-            if reason_display == "HALAL":
-                text = 'Green competitor wins by "HALAL"'
+            if reason_display == "HALOL":
+                text = 'Green competitor wins by "HALOL"'
             else:
                 text = f"{self.cfg['name2']} WINS"
             self.winner_lbl.config(text=text, bg="#00e676", fg="black")
 
         # If match already ended (or you just want to force the final screen), show overlay too
-        if not self.running and self.time_left == 0 or self.match_over:
+        if was_auto_deciding:
+            self.match_over = True
+        if (not self.running and self.time_left == 0) or self.match_over or was_auto_deciding:
             self._show_final_winner_screen(who, reason_display)
 
 
@@ -982,6 +1108,7 @@ class ScoreboardWindow(tk.Toplevel):
             except Exception:
                 pass
             self.after_id = None
+        self._cancel_pending_auto_winner()
         self.running = False
         self.destroy()
         self.root.deiconify()
