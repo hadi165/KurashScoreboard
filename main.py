@@ -707,10 +707,17 @@ class ScoreboardWindow(tk.Toplevel):
         opponent = self.green if is_blue else self.blue
 
         label = SCORE_LABELS[idx]
+        if label == "G":
+            winner = "GREEN" if is_blue else "BLUE"
+            self._finish_match_with_winner(winner, reason="G PENALTY")
+            return
         if label == "T":  # T gives opponent a C
             opponent[LABEL_TO_INDEX["C"]] = clamp(opponent[LABEL_TO_INDEX["C"]] + delta)
-        elif label == "D":  # D gives opponent a Y
+        elif label == "D":  # D gives opponent a Y and removes any mirrored C from previous T
             opponent[LABEL_TO_INDEX["Y"]] = clamp(opponent[LABEL_TO_INDEX["Y"]] + delta)
+            if delta > 0:
+                c_idx = LABEL_TO_INDEX["C"]
+                opponent[c_idx] = clamp(opponent[c_idx] - 1)
 
 
     def _finish_match_with_winner(self, winner: str, reason: str = ""):
@@ -735,13 +742,12 @@ class ScoreboardWindow(tk.Toplevel):
         if self.match_over:
             return False
 
-        c_idx = LABEL_TO_INDEX["C"]
         y_idx = LABEL_TO_INDEX["Y"]
 
-        if self.blue[c_idx] >= 3 or self.blue[y_idx] >= 2:
+        if self.blue[y_idx] >= 2:
             self._finish_match_with_winner("GREEN")
             return True
-        if self.green[c_idx] >= 3 or self.green[y_idx] >= 2:
+        if self.green[y_idx] >= 2:
             self._finish_match_with_winner("BLUE")
             return True
         return False
