@@ -453,7 +453,7 @@ class ScoreboardWindow(tk.Toplevel):
         btn("Clear WINNER",     lambda: self._show_winner(""))
         btn("Blue HALAL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
         btn("Green HALAL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
-        btn("Resume JAZA (J)",  self._resume_from_jaza)
+        btn("Resume JAZZO (J)",  self._resume_from_jaza)
         btn("Fullscreen (F11)", lambda: self._toggle_fullscreen())
         btn("Zoom +",           self._zoom_in)
         btn("Zoom -",           self._zoom_out)
@@ -687,7 +687,7 @@ class ScoreboardWindow(tk.Toplevel):
         self.running = False
         self.jaza_active = True
         self.jaza_consumed = True
-        self.winner_lbl.config(text="JAZA", bg="#ffe000", fg="black")
+        self.winner_lbl.config(text="JAZZO", bg="#ffe000", fg="black")
 
 
     def _resume_from_jaza(self):
