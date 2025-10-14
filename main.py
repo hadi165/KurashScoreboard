@@ -15,14 +15,24 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 import tkinter.font as tkfont
 
+# Backward-compatible resample filter for Pillow
+RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
+
 # --- Windows DPI awareness to avoid blurry UI ---
 if sys.platform == "win32":
     try:
         import ctypes
+        # Prefer Per-Monitor V2 if available (Windows 10+), else fall back gracefully
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = ctypes.c_void_p(-4)
+            ctypes.windll.user32.SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
         except Exception:
-            ctypes.windll.user32.SetProcessDPIAware()
+            try:
+                # 2 = PROCESS_PER_MONITOR_DPI_AWARE (V1)
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
+            except Exception:
+                # Legacy fallback
+                ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         pass
 
@@ -60,8 +70,10 @@ FLAG_BOOST = 1.6
 # Default zoom tuned so fullscreen layouts fit on common displays without manual adjustment
 DEFAULT_ZOOM = 0.54
 
-# If False, ignore OS DPI scaling to avoid oversized UI on high scaling
-RESPECT_DPI = False
+# If True, include OS DPI scaling (Per‑Monitor aware) in layout calculations
+# We also normalize the initial zoom by the detected DPI so the effective size
+# remains consistent across 100%/125%/150% Windows scaling.
+RESPECT_DPI = True
 
 COUNTRIES = [
     ("Afghanistan","AFG"),("Bahrain","BRN"),("Chinese Taipei","TPE"),("Hong Kong","HKG"),
@@ -199,6 +211,8 @@ class ScoreboardWindow(tk.Toplevel):
         self._blue_flag_img=None; self._green_flag_img=None
         self._ika_logo_img=None
         self._build(); self._bind(); self._update_time()
+        # Apply initial scale
+        self._apply_scale()
         self.bind("<Configure>", self._on_resize)
         self.protocol("WM_DELETE_WINDOW", self._close)
         self.deiconify(); self.focus_force()
@@ -219,8 +233,20 @@ class ScoreboardWindow(tk.Toplevel):
         return s_win * s_dpi * self.zoom
 
     def _apply_scale(self):
-        s = self._calc_scale(); self.scale = s
-        def setsize(fontobj, base): fontobj.configure(size=max(10, int(base*s)))
+        # Include DPI in media scale, but exclude it from font/layout scaling to avoid double DPI
+        s_media = self._calc_scale()
+        try:
+            dpi = self.winfo_fpixels('1i')
+            s_dpi = max(1.0, dpi/96.0)
+        except Exception:
+            s_dpi = 1.0
+        if not RESPECT_DPI:
+            s_dpi = 1.0
+
+        s_ui = max(0.1, s_media / s_dpi)
+        self.scale = s_ui
+
+        def setsize(fontobj, base): fontobj.configure(size=max(10, int(base*s_ui)))
         setsize(self.f_time,   BASE["TIME"])
         setsize(self.f_digit,  BASE["DIGIT"])
         setsize(self.f_code,   BASE["CODE"])
@@ -233,10 +259,13 @@ class ScoreboardWindow(tk.Toplevel):
         self._refresh_flags()
         self._refresh_logo()
 
-        pad = max(12, int(24*s))
+        pad = max(12, int(24*s_ui))
         for cell in getattr(self, "b_cells", []): cell.grid_configure(padx=pad)
         for cell in getattr(self, "g_cells", []): cell.grid_configure(padx=pad)
         self._update_timeout_widgets()
+        # Relayout control buttons on scale/resize
+        if hasattr(self, "_layout_control_buttons"):
+            self._layout_control_buttons()
 
     def _zoom_in(self):  self.zoom = min(3.0, self.zoom*1.08); self._apply_scale()
     def _zoom_out(self): self.zoom = max(0.35, self.zoom/1.08); self._apply_scale()
@@ -247,8 +276,12 @@ class ScoreboardWindow(tk.Toplevel):
         for ext in (".jpg",".png",".jpeg"):
             p = os.path.join(FLAGS_DIR, f"{code.upper()}{ext}")
             if os.path.exists(p):
-                try: return ImageTk.PhotoImage(Image.open(p).resize((w,h), Image.LANCZOS))
-                except Exception: return None
+                try:
+                    with Image.open(p) as im:
+                        resized = im.resize((w, h), RESAMPLE)
+                        return ImageTk.PhotoImage(resized)
+                except Exception:
+                    return None
         return None
 
     def _refresh_flags(self):
@@ -290,7 +323,7 @@ class ScoreboardWindow(tk.Toplevel):
                     return
                 scale = min(max_w / ow, max_h / oh)
                 new_size = (max(10, int(ow * scale)), max(10, int(oh * scale)))
-                resized = img.resize(new_size, Image.LANCZOS)
+                resized = img.resize(new_size, RESAMPLE)
                 self._ika_logo_img = ImageTk.PhotoImage(resized)
                 self.ika_logo.config(image=self._ika_logo_img)
         except Exception:
