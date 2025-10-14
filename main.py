@@ -723,7 +723,11 @@ class ScoreboardWindow(tk.Toplevel):
 
 
     def _resume_from_jaza(self):
-        if not self.jaza_active or self.match_over or self.auto_deciding:
+        if self.match_over:
+            return
+        if self.auto_deciding:
+            self._cancel_pending_auto_winner()
+        if not self.jaza_active:
             return
         self.jaza_active = False
         self._show_winner("")
@@ -795,6 +799,10 @@ class ScoreboardWindow(tk.Toplevel):
             if delta > 0:
                 c_idx = LABEL_TO_INDEX["C"]
                 opponent[c_idx] = clamp(opponent[c_idx] - 1)
+                penalized = self.blue if is_blue else self.green
+                t_idx = LABEL_TO_INDEX["T"]
+                if penalized[t_idx] > 0:
+                    penalized[t_idx] = clamp(penalized[t_idx] - 1)
 
 
     def _finish_match_with_winner(self, winner: str, reason: str = ""):
@@ -1057,6 +1065,8 @@ class ScoreboardWindow(tk.Toplevel):
         b("<space>", self._toggle_timer)
         b("t", self._reset_time)
         b("0", self._reset_all)
+        b("<Key-0>", self._reset_all)
+        b("<KP_0>", self._reset_all)
 
         # Fullscreen
         b("<F11>", lambda e: self._toggle_fullscreen())
