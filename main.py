@@ -440,30 +440,36 @@ class ScoreboardWindow(tk.Toplevel):
         tk.Frame(green_row, bg="black").pack(side="left", expand=True)
 
         # Controls (also add small helpers for fullscreen/zoom)
-     # Controls (centered row)
-        ctrl = tk.Frame(self, bg="black"); ctrl.pack(fill="x", pady=6)
+        # Controls (centered row, responsive wrap)
+        self.ctrl = tk.Frame(self, bg="black"); self.ctrl.pack(fill="x", pady=6)
 
-        # Inner frame shrinks to content; packing it (no side=left/right) centers it within 'ctrl'
-        btns = tk.Frame(ctrl, bg="black")
-        btns.pack()
+        # Container for buttons; we will grid them responsively in multiple rows
+        self.ctrl_btns = tk.Frame(self.ctrl, bg="black")
+        self.ctrl_btns.pack()
 
-        def btn(t, cmd):
-            tk.Button(btns, text=t, command=cmd).pack(side="left", padx=6)
+        self._control_buttons = []
+        def add_btn(text, cmd):
+            b = tk.Button(self.ctrl_btns, text=text, command=cmd)
+            self._control_buttons.append(b)
+            return b
 
-        btn("Start/Pause (Space)", self._toggle_timer)
-        btn("Reset Time (t)", self._reset_time)
-        btn("All Reset (0)", self._reset_all)
-        btn("New Match",     self._new_match)
-        btn("Blue WINNER (b)",  lambda: self._show_winner("BLUE"))
-        btn("Green WINNER (g)", lambda: self._show_winner("GREEN"))
-        btn("Clear WINNER",     lambda: self._show_winner(""))
-        btn("Blue HALOL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
-        btn("Green HALOL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
-        btn("Resume JAZZO (J)",  self._resume_from_jaza)
-        btn("Fullscreen (F11)", lambda: self._toggle_fullscreen())
-        btn("Zoom +",           self._zoom_in)
-        btn("Zoom -",           self._zoom_out)
-        btn("Zoom 100% (Ctrl+0)", self._zoom_reset)
+        add_btn("Start/Pause (Space)", self._toggle_timer)
+        add_btn("Reset Time (t)", self._reset_time)
+        add_btn("All Reset (0)", self._reset_all)
+        add_btn("New Match",     self._new_match)
+        add_btn("Blue WINNER (b)",  lambda: self._show_winner("BLUE"))
+        add_btn("Green WINNER (g)", lambda: self._show_winner("GREEN"))
+        add_btn("Clear WINNER",     lambda: self._show_winner(""))
+        add_btn("Blue HALOL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
+        add_btn("Green HALOL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
+        add_btn("Resume JAZZO (J)",  self._resume_from_jaza)
+        add_btn("Fullscreen (F11)", lambda: self._toggle_fullscreen())
+        add_btn("Zoom +",           self._zoom_in)
+        add_btn("Zoom -",           self._zoom_out)
+        add_btn("Zoom 100% (Ctrl+0)", self._zoom_reset)
+
+        # Initial responsive layout
+        self._layout_control_buttons()
 
 
 
@@ -986,6 +992,53 @@ class ScoreboardWindow(tk.Toplevel):
         self._reset_time()
         self._refresh_digits()
         self._update_timeout_widgets()
+        # Relayout control buttons on scale/resize
+        self._layout_control_buttons()
+
+    def _layout_control_buttons(self):
+        """Lay out control buttons in multiple rows to fit available width.
+        Works well on smaller screens where a single row would overflow.
+        """
+        if not hasattr(self, "_control_buttons") or not self._control_buttons:
+            return
+
+        parent = getattr(self, "ctrl_btns", None)
+        if parent is None:
+            return
+
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+
+        # Available width for buttons (fallback to window width if not realized yet)
+        avail = parent.winfo_width()
+        if avail <= 1:
+            avail = max(300, self.winfo_width() - 40)
+
+        pad = max(4, int(8 * self.scale))
+
+        # Clear any existing grid placements
+        for b in self._control_buttons:
+            try:
+                b.grid_forget()
+            except Exception:
+                pass
+
+        row = 0
+        col = 0
+        curw = 0
+        for b in self._control_buttons:
+            # Ask each button how wide it wants to be
+            bw = b.winfo_reqwidth() + pad * 2
+            # Wrap to next row if exceeding available width
+            if col > 0 and (curw + bw > avail):
+                row += 1
+                col = 0
+                curw = 0
+            b.grid(row=row, column=col, padx=pad, pady=(pad//2))
+            col += 1
+            curw += bw
         self.final_reason = ""
         self._show_winner("")  # clear mini ribbon
         self._event_counter = 0
