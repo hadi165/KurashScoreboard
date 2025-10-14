@@ -69,6 +69,7 @@ FLAG_BOOST = 1.6
 # Default zoom for initial layout and Ctrl+0 reset (tune to your preference)
 # Default zoom tuned so fullscreen layouts fit on common displays without manual adjustment
 DEFAULT_ZOOM = 0.54
+BASE_NAME_FRAME_WIDTH = 420
 
 # If True, include OS DPI scaling (Per‑Monitor aware) in layout calculations
 # We also normalize the initial zoom by the detected DPI so the effective size
@@ -106,8 +107,8 @@ class ConfigWindow(tk.Tk):
         self.show_names = tk.BooleanVar(value=False)
         self.country1 = tk.StringVar(value="Turkmenistan (TKM)")
         self.country2 = tk.StringVar(value="Uzbekistan (UZB)")
-        self.name1 = tk.StringVar(value="OMIROV DAYANCH")
-        self.name2 = tk.StringVar(value="TOJIEV ARSLONBEK")
+        self.name1 = tk.StringVar(value="")
+        self.name2 = tk.StringVar(value="")
         self.event_left = tk.StringVar(value="G-1 / No.48   Final")
         self.gender = tk.StringVar(value="Men")
         self.weight = tk.StringVar(value="-81Kg")
@@ -258,6 +259,7 @@ class ScoreboardWindow(tk.Toplevel):
 
         self._refresh_flags()
         self._refresh_logo()
+        self._sync_name_column_width()
 
         pad = max(12, int(24*s_ui))
         for cell in getattr(self, "b_cells", []): cell.grid_configure(padx=pad)
@@ -270,6 +272,41 @@ class ScoreboardWindow(tk.Toplevel):
     def _zoom_in(self):  self.zoom = min(3.0, self.zoom*1.08); self._apply_scale()
     def _zoom_out(self): self.zoom = max(0.35, self.zoom/1.08); self._apply_scale()
     def _zoom_reset(self): self.zoom = DEFAULT_ZOOM; self._apply_scale()
+
+    def _sync_name_column_width(self):
+        frames = [getattr(self, "blue_id", None), getattr(self, "green_id", None)]
+        if not all(frames):
+            return
+        try:
+            self.update_idletasks()
+        except Exception:
+            pass
+
+        names = [self.blue_name.cget("text"), self.green_name.cget("text")]
+        codes = [self.blue_code.cget("text"), self.green_code.cget("text")]
+        name_widths = [self.f_name.measure(txt) if txt else 0 for txt in names]
+        code_widths = [self.f_code.measure(txt) if txt else 0 for txt in codes]
+
+        pad = max(40, int(48 * self.scale))
+        target_width = max(
+            int(BASE_NAME_FRAME_WIDTH * self.scale),
+            max(name_widths + [0]) + pad,
+            max(code_widths + [0]) + pad // 2
+        )
+
+        name_heights = [self.blue_name.winfo_reqheight(), self.green_name.winfo_reqheight()]
+        code_heights = [self.blue_code.winfo_reqheight(), self.green_code.winfo_reqheight()]
+        content_height = max(name_heights + [0]) + max(code_heights + [0])
+        if content_height <= 0:
+            try:
+                name_ls = self.f_name.metrics("linespace")
+                code_ls = self.f_code.metrics("linespace")
+            except Exception:
+                name_ls = code_ls = 40
+            content_height = int((name_ls + code_ls) * 1.2)
+
+        for frame in frames:
+            frame.config(width=target_width, height=content_height)
 
     # ---------- assets ----------
     def _load_flag_image(self, code, w, h):
@@ -383,19 +420,22 @@ class ScoreboardWindow(tk.Toplevel):
         if self.cfg.get("show_flags"): self.blue_flag.pack(side="left", padx=(20,10))
 
         # NEW: vertical stack for name (blue box) + code
-        blue_id = tk.Frame(blue_row, bg="black"); blue_id.pack(side="left", padx=(0,30))
+        self.blue_id = tk.Frame(blue_row, bg="black")
+        self.blue_id.pack(side="left", padx=(0,30))
+        self.blue_id.pack_propagate(False)
 
         self.blue_name = tk.Label(
-            blue_id, text=self.cfg.get("name1",""),
-            bg="#1976d2", fg="white", font=self.f_name, padx=12, pady=4
+            self.blue_id, text=self.cfg.get("name1",""),
+            bg="#1976d2", fg="white", font=self.f_name, padx=12, pady=4,
+            anchor="w", justify="left"
         )
-        self.blue_name.pack(side="top", anchor="w")
+        self.blue_name.pack(side="top", fill="x")
 
         self.blue_code = tk.Label(
-            blue_id, text=self.cfg["code1"],
-            fg="white", bg="black", font=self.f_code
+            self.blue_id, text=self.cfg["code1"],
+            fg="white", bg="black", font=self.f_code, anchor="w", justify="left"
         )
-        self.blue_code.pack(side="top", anchor="w")
+        self.blue_code.pack(side="top", fill="x")
 
         # digits + labels in one grid
         self.b_digits_frame = tk.Frame(blue_row, bg="black"); self.b_digits_frame.pack(side="left")
@@ -438,19 +478,22 @@ class ScoreboardWindow(tk.Toplevel):
         if self.cfg.get("show_flags"): self.green_flag.pack(side="left", padx=(20,10))
 
         # NEW: vertical stack for code + name (green box)
-        green_id = tk.Frame(green_row, bg="black"); green_id.pack(side="left", padx=(0,30))
+        self.green_id = tk.Frame(green_row, bg="black")
+        self.green_id.pack(side="left", padx=(0,30))
+        self.green_id.pack_propagate(False)
 
         self.green_code = tk.Label(
-            green_id, text=self.cfg["code2"],
-            fg="white", bg="black", font=self.f_code
+            self.green_id, text=self.cfg["code2"],
+            fg="white", bg="black", font=self.f_code, anchor="w", justify="left"
         )
-        self.green_code.pack(side="top", anchor="w")
+        self.green_code.pack(side="top", fill="x")
 
         self.green_name = tk.Label(
-            green_id, text=self.cfg.get("name2",""),
-            bg="#2e7d32", fg="white", font=self.f_name, padx=12, pady=4
+            self.green_id, text=self.cfg.get("name2",""),
+            bg="#2e7d32", fg="white", font=self.f_name, padx=12, pady=4,
+            anchor="w", justify="left"
         )
-        self.green_name.pack(side="top", anchor="w")
+        self.green_name.pack(side="top", fill="x")
 
         # digits + labels in one grid
         self.g_digits_frame = tk.Frame(green_row, bg="black"); self.g_digits_frame.pack(side="left")
@@ -492,7 +535,6 @@ class ScoreboardWindow(tk.Toplevel):
         add_btn("New Match",     self._new_match)
         add_btn("Blue WINNER (b)",  lambda: self._show_winner("BLUE"))
         add_btn("Green WINNER (g)", lambda: self._show_winner("GREEN"))
-        add_btn("Clear WINNER",     lambda: self._show_winner(""))
         add_btn("Blue HALOL (Shift+B)",  lambda: self._handle_halal_hotkey("BLUE"))
         add_btn("Green HALOL (Shift+G)", lambda: self._handle_halal_hotkey("GREEN"))
         add_btn("Resume JAZZO (J)",  self._resume_from_jaza)
@@ -827,14 +869,21 @@ class ScoreboardWindow(tk.Toplevel):
             self._schedule_auto_win(winner, "G PENALTY")
             return
         if label == "T":  # T gives opponent a C
-            opponent[LABEL_TO_INDEX["C"]] = clamp(opponent[LABEL_TO_INDEX["C"]] + delta)
-            if delta > 0:
-                self._record_score_event(opponent_side, "C", delta)
+            c_idx = LABEL_TO_INDEX["C"]
+            before_c = opponent[c_idx]
+            new_c = clamp(before_c + delta)
+            opponent[c_idx] = new_c
+            gained_c = new_c - before_c
+            if gained_c > 0:
+                self._record_score_event(opponent_side, "C", gained_c)
         elif label == "D":  # D gives opponent a Y and removes any mirrored C from previous T
-            opponent[LABEL_TO_INDEX["Y"]] = clamp(opponent[LABEL_TO_INDEX["Y"]] + delta)
-            if delta > 0:
-                self._record_score_event(opponent_side, "Y", delta)
-            if delta > 0:
+            y_idx = LABEL_TO_INDEX["Y"]
+            before_y = opponent[y_idx]
+            new_y = clamp(before_y + delta)
+            opponent[y_idx] = new_y
+            gained_y = new_y - before_y
+            if gained_y > 0:
+                self._record_score_event(opponent_side, "Y", gained_y)
                 c_idx = LABEL_TO_INDEX["C"]
                 opponent[c_idx] = clamp(opponent[c_idx] - 1)
                 penalized = self.blue if is_blue else self.green
@@ -898,6 +947,10 @@ class ScoreboardWindow(tk.Toplevel):
             return side, f"Last {label}"
 
         winner = "GREEN" if side == "BLUE" else "BLUE"
+        if label == "D":
+            return winner, 'Last "Y" score'
+        if label == "T":
+            return winner, 'Last "C" score'
         return winner, f"LAST {label} PENALTY"
 
 
