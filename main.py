@@ -36,7 +36,6 @@ SOUNDS_DIR = os.path.join(ROOT_DIR, "Sounds")
 IKA_LOGO_PATH = os.path.join(FLAGS_DIR, "IKA.png")
 
 APP_TITLE = "Kurash Scoreboard (Photo Theme – Responsive)"
-ROOT_DIR   = os.path.dirname(__file__)
 
 
 DEFAULT_MEN_MMSS   = (5, 0)
