@@ -670,7 +670,7 @@ class ScoreboardWindow(tk.Toplevel):
         current = self.timeout_counts.get(side, 0)
         if current >= MAX_TIMEOUTS:
             opponent = "GREEN" if side == "BLUE" else "BLUE"
-            self._schedule_auto_win(opponent, "TIMEOUT LIMIT")
+            self._schedule_auto_win(opponent, "Time out")
             return
 
         self.timeout_counts[side] = current + 1
@@ -852,7 +852,11 @@ class ScoreboardWindow(tk.Toplevel):
 
         kind, side, label, _ = latest
         if kind == "CY":
-            return side, f"LAST {label}"
+            if label == "Y":
+                return side, 'Last "Y" score'
+            if label == "C":
+                return side, 'Last "C" score'
+            return side, f"Last {label}"
 
         winner = "GREEN" if side == "BLUE" else "BLUE"
         return winner, f"LAST {label} PENALTY"
