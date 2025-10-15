@@ -594,16 +594,14 @@ class ScoreboardWindow(tk.Toplevel):
         self._buzz()
 
         # decide winner and show full-screen overlay
-        b, g = sum(self.blue), sum(self.green)
-        if b > g:
-            self._schedule_auto_win("BLUE", "POINT ADVANTAGE")
-        elif g > b:
-            self._schedule_auto_win("GREEN", "POINT ADVANTAGE")
+        winner = self._winner_by_point_advantage()
+        if winner:
+            self._schedule_auto_win(winner, "POINT ADVANTAGE")
         else:
             resolved = self._resolve_draw_by_last_event()
             if resolved:
-                winner, reason = resolved
-                self._schedule_auto_win(winner, reason)
+                w, reason = resolved
+                self._schedule_auto_win(w, reason)
             else:
                 self._show_tie_screen()
 
@@ -926,6 +924,22 @@ class ScoreboardWindow(tk.Toplevel):
         return False
 
 
+    def _winner_by_point_advantage(self) -> str:
+        """Compare scores with Y outranking any number of C points.
+
+        Returns "BLUE", "GREEN", or "" if equal by Y and C (true draw).
+        """
+        y_idx = LABEL_TO_INDEX["Y"]
+        c_idx = LABEL_TO_INDEX["C"]
+        blue_pair = (self.blue[y_idx], self.blue[c_idx])
+        green_pair = (self.green[y_idx], self.green[c_idx])
+        if blue_pair > green_pair:
+            return "BLUE"
+        if green_pair > blue_pair:
+            return "GREEN"
+        return ""
+
+
     def _resolve_draw_by_last_event(self):
         latest = None
         if self._last_cy_event:
@@ -1154,8 +1168,8 @@ class ScoreboardWindow(tk.Toplevel):
 
 
     def _auto_winner(self):
-        b,g = sum(self.blue), sum(self.green)
-        self._show_winner("BLUE" if b>g else "GREEN" if g>b else "")
+        w = self._winner_by_point_advantage()
+        self._show_winner(w)
 
     def _show_winner(self, who: str, reason: str = ""):
         # Keep small ribbon (if you still want it mid-match)
