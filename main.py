@@ -77,7 +77,7 @@ BASE_NAME_FRAME_WIDTH = 420
 RESPECT_DPI = True
 
 COUNTRIES = [
-    ("Afghanistan","AFG"),("Bahrain","BRN"),("Chinese Taipei","TPE"),("Hong Kong","HKG"),
+    ("Afghanistan","AFG"),("Bahrain","BHR"),("Chinese Taipei","TPE"),("Hong Kong","HKG"),
     ("India","IND"),("Indonesia","INA"),("Iran","IRI"),("Iraq","IRQ"),
     ("Japan","JPN"),("Kazakhstan","KAZ"),("Malaysia","MAS"),("Philippines","PHI"),
     ("Qatar","QAT"),("Saudi Arabia","KSA"),("Singapore","SGP"),("South Korea","KOR"),
