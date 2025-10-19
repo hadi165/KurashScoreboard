@@ -198,6 +198,9 @@ class ScoreboardWindow(tk.Toplevel):
         self._pending_auto_winner = None
         self._auto_winner_after_id = None
         self.auto_deciding = False
+        # Track origin of C points: direct vs from opponent's T penalties
+        self._direct_c = {"BLUE": 0, "GREEN": 0}
+        self._penalty_c = {"BLUE": 0, "GREEN": 0}
 
         # Named fonts (resize together)
         self.f_time    = tkfont.Font(family="Arial", weight="bold", size=BASE["TIME"])
@@ -310,7 +313,7 @@ class ScoreboardWindow(tk.Toplevel):
 
     # ---------- assets ----------
     def _load_flag_image(self, code, w, h):
-        for ext in (".jpg",".png",".jpeg"):
+        for ext in (".jpg", ".png", ".jpeg"):
             p = os.path.join(FLAGS_DIR, f"{code.upper()}{ext}")
             if os.path.exists(p):
                 try:
@@ -320,7 +323,7 @@ class ScoreboardWindow(tk.Toplevel):
                 except Exception:
                     return None
         return None
-
+ 
     def _refresh_flags(self):
         if not self.cfg.get("show_flags"):
             return
@@ -866,12 +869,21 @@ class ScoreboardWindow(tk.Toplevel):
             winner = "GREEN" if is_blue else "BLUE"
             self._schedule_auto_win(winner, "G PENALTY")
             return
-        if label == "T":  # T gives opponent a C
+        if label == "T":  # T gives opponent a C (or removes if delta<0)
             c_idx = LABEL_TO_INDEX["C"]
             before_c = opponent[c_idx]
             new_c = clamp(before_c + delta)
             opponent[c_idx] = new_c
             gained_c = new_c - before_c
+            # Maintain bookkeeping of penalty-awarded C for opponent
+            if delta > 0:
+                self._penalty_c[opponent_side] = max(0, self._penalty_c[opponent_side] + delta)
+            elif delta < 0:
+                take = min(-delta, self._penalty_c[opponent_side])
+                self._penalty_c[opponent_side] -= take
+                # Ensure consistency: penalty C cannot exceed total C
+                self._penalty_c[opponent_side] = min(self._penalty_c[opponent_side], opponent[c_idx])
+
             if gained_c > 0:
                 self._record_score_event(opponent_side, "C", gained_c)
         elif label == "D":  # D gives opponent a Y and removes any mirrored C from previous T
@@ -883,7 +895,12 @@ class ScoreboardWindow(tk.Toplevel):
             if gained_y > 0:
                 self._record_score_event(opponent_side, "Y", gained_y)
                 c_idx = LABEL_TO_INDEX["C"]
+                # Remove one mirrored C if present
                 opponent[c_idx] = clamp(opponent[c_idx] - 1)
+                if self._penalty_c[opponent_side] > 0:
+                    self._penalty_c[opponent_side] -= 1
+                # Ensure consistency bounds
+                self._penalty_c[opponent_side] = max(0, min(self._penalty_c[opponent_side], opponent[c_idx]))
                 penalized = self.blue if is_blue else self.green
                 t_idx = LABEL_TO_INDEX["T"]
                 if penalized[t_idx] > 0:
@@ -912,14 +929,13 @@ class ScoreboardWindow(tk.Toplevel):
         """End the match if penalty thresholds reached."""
         if self.match_over or self.auto_deciding:
             return True
-
+        # Immediate end if any side reaches 2×Y (treat as POINT ADVANTAGE wording)
         y_idx = LABEL_TO_INDEX["Y"]
-
         if self.blue[y_idx] >= 2:
-            self._schedule_auto_win("GREEN", "Y PENALTIES")
+            self._finish_match_with_winner("BLUE", reason="POINT ADVANTAGE")
             return True
         if self.green[y_idx] >= 2:
-            self._schedule_auto_win("BLUE", "Y PENALTIES")
+            self._finish_match_with_winner("GREEN", reason="POINT ADVANTAGE")
             return True
         return False
 
@@ -937,6 +953,12 @@ class ScoreboardWindow(tk.Toplevel):
             return "BLUE"
         if green_pair > blue_pair:
             return "GREEN"
+        # If Y and C are equal, prefer side with more DIRECT C (not from penalties)
+        if blue_pair[1] > 0 or green_pair[1] > 0:
+            b_dc = self._direct_c.get("BLUE", 0)
+            g_dc = self._direct_c.get("GREEN", 0)
+            if b_dc != g_dc:
+                return "BLUE" if b_dc > g_dc else "GREEN"
         return ""
 
 
@@ -1024,6 +1046,8 @@ class ScoreboardWindow(tk.Toplevel):
 
         if reason == "HALOL":
             tk.Label(self.final_frame, text='WINS BY "HALOL"', bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
+        elif reason == "POINT ADVANTAGE":
+            tk.Label(self.final_frame, text='WINS BY "POINT ADVANTAGE"', bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
         elif reason:
             tk.Label(self.final_frame, text=reason, bg=bg, fg=fg, font=code_font).pack(pady=(10, 0))
 
@@ -1061,6 +1085,21 @@ class ScoreboardWindow(tk.Toplevel):
             return
 
         self.blue[idx] = new_val
+        # Bookkeep direct C changes for BLUE when operator edits C bucket
+        if SCORE_LABELS[idx] == "C" and delta != 0:
+            if delta > 0:
+                self._direct_c["BLUE"] += delta
+            else:
+                take = min(-delta, self._direct_c["BLUE"])
+                self._direct_c["BLUE"] -= take
+                # If operator reduced more than direct, trim penalty-tagged C as well
+                rem = -delta - take
+                if rem > 0:
+                    self._penalty_c["BLUE"] = max(0, self._penalty_c["BLUE"] - rem)
+                # Keep within total C
+                total_c = self.blue[LABEL_TO_INDEX["C"]]
+                self._direct_c["BLUE"] = min(self._direct_c["BLUE"], total_c)
+                self._penalty_c["BLUE"] = min(self._penalty_c["BLUE"], total_c - self._direct_c["BLUE"])
         self._record_score_event("BLUE", SCORE_LABELS[idx], delta)
         self._apply_penalty_side_effects(is_blue=True, idx=idx, delta=delta)
         self._refresh_digits()
@@ -1076,6 +1115,19 @@ class ScoreboardWindow(tk.Toplevel):
             return
 
         self.green[idx] = new_val
+        # Bookkeep direct C changes for GREEN when operator edits C bucket
+        if SCORE_LABELS[idx] == "C" and delta != 0:
+            if delta > 0:
+                self._direct_c["GREEN"] += delta
+            else:
+                take = min(-delta, self._direct_c["GREEN"])
+                self._direct_c["GREEN"] -= take
+                rem = -delta - take
+                if rem > 0:
+                    self._penalty_c["GREEN"] = max(0, self._penalty_c["GREEN"] - rem)
+                total_c = self.green[LABEL_TO_INDEX["C"]]
+                self._direct_c["GREEN"] = min(self._direct_c["GREEN"], total_c)
+                self._penalty_c["GREEN"] = min(self._penalty_c["GREEN"], total_c - self._direct_c["GREEN"])
         self._record_score_event("GREEN", SCORE_LABELS[idx], delta)
         self._apply_penalty_side_effects(is_blue=False, idx=idx, delta=delta)
         self._refresh_digits()
@@ -1087,6 +1139,8 @@ class ScoreboardWindow(tk.Toplevel):
         self.blue = [0]*SCORE_COUNT
         self.green = [0]*SCORE_COUNT
         self.timeout_counts = {"BLUE": 0, "GREEN": 0}
+        self._direct_c = {"BLUE": 0, "GREEN": 0}
+        self._penalty_c = {"BLUE": 0, "GREEN": 0}
         self.match_over = False
         self._clear_final_screen()
         self._reset_time()
@@ -1187,12 +1241,16 @@ class ScoreboardWindow(tk.Toplevel):
         if who == "BLUE":
             if reason_display == "HALOL":
                 text = 'Blue competitor wins by "HALOL"'
+            elif reason_display == "POINT ADVANTAGE":
+                text = 'Blue competitor wins by "POINT ADVANTAGE"'
             else:
                 text = f"{self.cfg['name1']} WINS"
             self.winner_lbl.config(text=text, bg="#1976d2", fg="white")
         elif who == "GREEN":
             if reason_display == "HALOL":
                 text = 'Green competitor wins by "HALOL"'
+            elif reason_display == "POINT ADVANTAGE":
+                text = 'Green competitor wins by "POINT ADVANTAGE"'
             else:
                 text = f"{self.cfg['name2']} WINS"
             self.winner_lbl.config(text=text, bg="#00e676", fg="black")
