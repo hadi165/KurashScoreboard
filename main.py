@@ -78,7 +78,7 @@ RESPECT_DPI = True
 
 COUNTRIES = [
     ("Afghanistan","AFG"),("Bahrain","BHR"),("Chinese Taipei","TPE"),("Hong Kong","HKG"),
-    ("India","IND"),("Indonesia","INA"),("Iran","IRI"),("Iraq","IRQ"),
+    ("India","IND"),("Indonesia","INA"),("Iran","IRI"),("Iraq","IRQ"),("Jordan","JOR"),
     ("Japan","JPN"),("Kazakhstan","KAZ"),("Kyrgyzstan","KGZ"),("Malaysia","MAS"),("Philippines","PHI"),
     ("Qatar","QAT"),("Saudi Arabia","KSA"),("Singapore","SGP"),("South Korea","KOR"),
     ("Tajikistan","TJK"),("Turkmenistan","TKM"),("Thailand","THA"),("Uzbekistan","UZB"),("Vietnam","VIE"),
