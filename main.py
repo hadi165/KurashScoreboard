@@ -79,9 +79,9 @@ RESPECT_DPI = True
 COUNTRIES = [
     ("Afghanistan","AFG"),("Bahrain","BHR"),("Chinese Taipei","TPE"),("Hong Kong","HKG"),
     ("India","IND"),("Indonesia","INA"),("Iran","IRI"),("Iraq","IRQ"),
-    ("Japan","JPN"),("Kazakhstan","KAZ"),("Malaysia","MAS"),("Philippines","PHI"),
+    ("Japan","JPN"),("Kazakhstan","KAZ"),("Kyrgyzstan","KGZ"),("Malaysia","MAS"),("Philippines","PHI"),
     ("Qatar","QAT"),("Saudi Arabia","KSA"),("Singapore","SGP"),("South Korea","KOR"),
-    ("Tajikistan","TJK"),("Thailand","THA"),("Uzbekistan","UZB"),("Vietnam","VIE"),
+    ("Tajikistan","TJK"),("Turkmenistan","TKM"),("Thailand","THA"),("Uzbekistan","UZB"),("Vietnam","VIE"),
 ]
 WEIGHTS = ["-48Kg","-52Kg","-57Kg","-60Kg","-63Kg","-65Kg","-66Kg","-70Kg","-73Kg",
            "-78Kg","-81Kg","-83Kg","-87Kg","+87Kg","-90Kg","-100Kg","+100Kg","-120Kg","+120Kg"]
